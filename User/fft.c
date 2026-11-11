@@ -26,10 +26,20 @@
 
 static float s_re[FFT_SIZE] TCMRAM_BSS;
 static float s_im[FFT_SIZE] TCMRAM_BSS;
+#ifdef CHIP_APM32F407
+/* APM32 build: the same tables, precomputed in flash (tools/gen_fft_tables.py), to free 5 KB of CCM */
+#include "fft_tables.h"
+_Static_assert(FFT_TABLES_SIZE == FFT_SIZE, "regenerate User/fft_tables.h for this FFT_SIZE");
+#define s_twiddle_cos k_fft_twiddle_cos
+#define s_twiddle_sin k_fft_twiddle_sin
+#define s_hann        k_fft_hann
+#define s_bitrev      k_fft_bitrev
+#else
 static float s_twiddle_cos[FFT_SIZE / 2U] TCMRAM_BSS;
 static float s_twiddle_sin[FFT_SIZE / 2U] TCMRAM_BSS;
 static float s_hann[FFT_SIZE] TCMRAM_BSS;
 static uint16_t s_bitrev[FFT_SIZE] TCMRAM_BSS;
+#endif
 
 /*
  * ======================================================================
@@ -115,6 +125,7 @@ void fft_set_bins_hook(void (*f)(const float *re, const float *im, uint32_t n))
 /* Sine approximation with no libm dependency - same method (Bhaskara
  * I) as gd32_i2s.c, reimplemented locally to keep the two modules
  * decoupled. */
+#ifndef CHIP_APM32F407   /* only used to build the tables, which are constants in the APM32 build */
 static float sinf_approx_local(float x)
 {
     float pi = 3.14159265358979f;
@@ -131,6 +142,7 @@ static float cosf_approx_local(float x)
 {
     return sinf_approx_local(x + (3.14159265358979f / 2.0f));
 }
+#endif
 
 /* Approximate log2(x) via IEEE754 bit reinterpretation (the classic
  * "fast log2" trick): not exact (typically a few percent error), but
@@ -151,6 +163,9 @@ static float log2_approx(float x)
 
 void fft_init(void)
 {
+#ifdef CHIP_APM32F407
+    /* tables are constants, see fft_tables.h */
+#else
     uint32_t n;
     uint32_t bits = 0U;
     uint32_t size = FFT_SIZE;
@@ -182,6 +197,7 @@ void fft_init(void)
         }
         s_bitrev[n] = (uint16_t)r;
     }
+#endif
 }
 
 /* The iterative radix-2 DIT butterfly pass, in-place over s_re/s_im.
