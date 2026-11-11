@@ -541,3 +541,23 @@ update4: update
 # Makefile -son codigo que se ejecuta- pero si un .mk: asi cambiar las
 # opciones no obliga a renombrar nada a mano cada vez.
 -include avisos.mk
+
+# APM32F407VGT6 build (HamGeek DSP-01 and other clones using that chip): linked at 0x08020000 behind the
+# stock DeepSDR bootloader, see APM32F407VG_FLASH.ld. Builds the .elf/.bin only (no update packaging);
+# flash with: dfu-util -d 314b:0106 -a 0 -s 0x08020000:leave -D build_apm32/firmware_apm32.bin
+# The APM32 has 128 KB of main RAM instead of 192: the modes listed in APM32_EXCLUDE are left out for now
+# and replaced by the no-op entry points of User/apm32_stubs.c (only built in this configuration).
+APM32_EXCLUDE = $(wildcard User/ft8_*.c) $(filter-out User/hfdl_viterbi.c User/hfdl_ram.c,$(wildcard User/hfdl_*.c)) User/mapa_bin.c User/mapa_eti.c $(wildcard User/wspr_*.c) \
+                $(wildcard User/stanag_*.c) User/s4415.c
+# Waterfall rows stored one byte per FFT bin (512) instead of per pixel (756), and a smaller compositor band.
+APM32_RAM_DEFS = -DWATERFALL_STORE_WIDTH=512 -DGFX2_BAND_H=4
+# System clock: 144 (in spec, default) or 192 (overclocked), see system_gd32f4xx.c
+APM32_SYSCLK_MHZ ?= 144
+.PHONY: apm32
+apm32:
+	@$(MAKE) BUILD_DIR=build_apm32 TARGET=firmware_apm32 \
+	         LDSCRIPT=APM32F407VG_FLASH.ld \
+	         DEFS_EXTRA="-DCHIP_APM32F407 -DAPM32_SYSCLK_MHZ=$(APM32_SYSCLK_MHZ) $(APM32_RAM_DEFS)" \
+	         USER_EXCLUIR="User/mapa_datos.c $(APM32_EXCLUDE)" \
+	         NO_FT8LIB=1 \
+	         build_apm32/firmware_apm32.bin

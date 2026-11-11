@@ -113,6 +113,9 @@ typedef union
      * El porque de los 60.304, y por que el giro 7 no entra ni pagando,
      * estan en hfdl_ram.h.
      */
+#ifndef CHIP_APM32F407
+    /* FT8 and HFDL are left out of the APM32 build (128 KB of RAM): the pool shrinks to the waterfall's size
+     * and the remaining borrowers (AIS, ALE, DSC, STANAG...) check the capacity they get at run time. */
     uint8_t hfdl_buf[HFDL_RAM_TOTAL];
 
 
@@ -253,6 +256,7 @@ typedef union
         uint8_t cands[1120];         /* candidate_list- ft8_decoder.c */
         char    lineas[48][88];      /* s_lin         - ft8_modo.c */
     } ft8;
+#endif
 } ft8_shared_ram_t;
 
 /*

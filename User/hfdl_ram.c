@@ -81,9 +81,11 @@ uint8_t *hfdl_scope_get_hfdl_ram(uint32_t *capacity_out)
  * LA RED DE LA QUE HABLA hfdl_scope_get_hfdl_ram(): la union no puede
  * encoger por debajo de lo que HFDL necesita. Hoy sobran 3.596 bytes.
  */
+#ifndef CHIP_APM32F407   /* HFDL itself is not in the APM32 build */
 _Static_assert(sizeof(g_ft8_shared_ram) >= HFDL_RAM_TOTAL,
                "la union se ha quedado por debajo de lo que pide HFDL: "
                "mira HFDL_RAM_TOTAL en hfdl_ram.h");
+#endif
 
 uint8_t *hfdl_ram_cabecera(void)
 {

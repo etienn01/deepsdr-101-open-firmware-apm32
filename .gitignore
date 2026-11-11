@@ -123,3 +123,4 @@ deepsdr-ui/sim/.x
 # el nombre. Son medidas de UNA sesion en UNA radio: el guion si es del
 # proyecto y se publica, los numeros que saca no.
 tools/vuelta_*.csv
+build_apm32/

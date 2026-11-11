@@ -250,9 +250,11 @@ CALIENTES = demod_am.o nr_ss.o anotch.o audiofil.o sam.o disc_fm.o nco.o \
 # abajo en el fichero, sigue entrando. La unica que no es perezosa es
 # vpath, que es una directiva y se procesa segun se lee - por eso hay que
 # declararla aqui explicitamente.
+INCLUDES  += -IFt8Lib
+# NO_FT8LIB=1 leaves the library out (APM32 build, see the apm32 target in reglas.mk)
+ifneq ($(NO_FT8LIB),1)
 C_SOURCES += $(wildcard Ft8Lib/ft8/*.c)
 vpath %.c Ft8Lib/ft8
-INCLUDES  += -IFt8Lib
 
 # El decodificador es el camino caliente de este modo -una ranura de FT8
 # son 15 s de audio que hay que digerir en los 2,4 s que quedan hasta la
@@ -274,6 +276,7 @@ CALIENTES += ft8_decoder.o ft8_fft.o ft8_decimator.o \
 # anada una segunda receta, que es justo lo que hacemos aqui.
 FT8_OBJETOS = $(addprefix $(BUILD_DIR)/,$(notdir $(patsubst %.c,%.o,$(wildcard Ft8Lib/ft8/*.c))))
 $(BUILD_DIR)/$(TARGET).elf: $(FT8_OBJETOS)
+endif
 
 # La regla de los calientes va AQUI, al final, y por el mismo motivo: la lista
 # de objetivos de una regla con variable especifica tambien se expande al
