@@ -2091,6 +2091,15 @@ int main(void)
      * responde se queda apagado solo y todo sigue por el camino de la CPU.
      * Ver ipa_blit.h. */
     ipa_blit_init();
+#ifdef CHIP_APM32F407
+    /* APM32 build: on the HamGeek the display bus edges couple into the audio as a crackle whenever the screen is
+     * redrawn (gone in the menus, much reduced at the 2 MHz slew rate, tested 2026-11-11). Start with soft edges;
+     * "Bus slew rate" on the advanced Information page still cycles it at run time. */
+#ifndef APM32_LCD_SLEW
+#define APM32_LCD_SLEW 0U   /* 0 = 2 MHz, 1 = 25 MHz, 2 = 50 MHz (the bootloader's setting) */
+#endif
+    rm68120_bus_pendiente_pon(APM32_LCD_SLEW);
+#endif
 
     /* Y el DMA que empuja los pixeles al panel. Hace una autoprueba contra
      * RAM -sin tocar la pantalla- y si no cuadra se queda apagado solo. Ver
