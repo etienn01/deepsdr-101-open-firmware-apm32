@@ -126,6 +126,7 @@ static void speaker_pa_gpio_init(void);
 static void speaker_pa_set_enabled(uint8_t on);
 #ifdef CHIP_APM32F407
 static void speaker_pa_hold(uint8_t hold);
+static float wf_color_floor(float db_min);
 #endif
 static void systick_delay_init(void);
 /*
@@ -9056,6 +9057,9 @@ static void chrome_sync(spec_chrome_t *c)
 
     c->db_min    = s_db_min;
     c->db_max    = s_db_max;
+#ifdef CHIP_APM32F407
+    c->wf_min    = wf_color_floor(s_db_min);   /* the legend shows the waterfall's own colour floor */
+#endif
     c->center_hz = panel_center_hz;
     c->span_hz   = full_span_hz;
     c->cmap      = spectrum_colormap_lut();
@@ -39083,6 +39087,25 @@ static void franja_arriba_tick(void)
     }
 }
 
+#ifdef CHIP_APM32F407
+/*
+ * APM32 build: the waterfall's colour floor follows the noise (median of the trace, minus 2 dB) instead of
+ * the auto scale's 5th percentile, which the band-edge filter roll-off drags down by 10-15 dB and which painted the
+ * noise in light blue, white and yellow. The spectrum trace keeps the auto scale's own floor.
+ */
+#include "spec_agc.h"
+static float wf_color_floor(float db_min)
+{
+    float f;
+    if (!s_spec_agc_enabled) { return db_min; }
+    f = spec_agc_mediana() - 2.0f;
+    return (f > db_min) ? f : db_min;
+}
+#define WF_COLOR_FLOOR wf_color_floor(s_db_min)
+#else
+#define WF_COLOR_FLOOR s_db_min
+#endif
+
 __attribute__((noinline))
 static void sdr_spectrum_waterfall_tick(void)
 {
@@ -40088,7 +40111,7 @@ static void sdr_spectrum_waterfall_tick(void)
                                 : 1.0f;
             /* La escala, una vez por las dos lineas: lleva la division.
              * Ver spectrum_colormap_escala(). */
-            float esc = spectrum_colormap_escala(s_db_min, s_db_max);
+            float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, s_db_max);
 
             /* Primera mitad del frame -o el frame entero, si no hay dos
              * medidas que repartir. */
@@ -40096,7 +40119,7 @@ static void sdr_spectrum_waterfall_tick(void)
                 uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
                 line[x] = spectrum_colormap_idx(parte ? (s_wf_mitad[bin] * inv_a)
                                                       : s_db_frame[bin],
-                                                s_db_min, esc);
+                                                WF_COLOR_FLOOR, esc);
             }
             waterfall_push_line(line); s_wf_lineas++;
 
@@ -40107,7 +40130,7 @@ static void sdr_spectrum_waterfall_tick(void)
                     uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
                     line[x] = spectrum_colormap_idx(
                                   (s_db_sum[bin] - s_wf_mitad[bin]) * inv_b,
-                                  s_db_min, esc);
+                                  WF_COLOR_FLOOR, esc);
                 }
             }
             waterfall_push_line(line); s_wf_lineas++;
@@ -40130,12 +40153,12 @@ static void sdr_spectrum_waterfall_tick(void)
 
             if (s_wf_frames >= k_wf[s_wf_vel].div) {
                 float inv = 1.0f / (float)s_wf_frames;
-                float esc = spectrum_colormap_escala(s_db_min, s_db_max);
+                float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, s_db_max);
 
                 for (x = 0; x < WATERFALL_WIDTH; x++) {
                     uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
                     line[x] = spectrum_colormap_idx(s_wf_sum[bin] * inv,
-                                                    s_db_min, esc);
+                                                    WF_COLOR_FLOOR, esc);
                 }
                 waterfall_push_line(line); s_wf_lineas++;
                 waterfall_blit(SPEC_TRACE_X, WF_Y, spectrum_colormap_lut());

@@ -19,6 +19,13 @@ static float bucket_to_db(uint32_t b)
            ((float)b + 0.5f) * ((SPEC_AGC_DB_CEIL - SPEC_AGC_DB_FLOOR) / (float)AGC_BUCKETS);
 }
 
+#ifdef CHIP_APM32F407
+/* Median of the last histogram, and its smoothed value (see spec_agc_mediana()). APM32 build only. */
+static float s_med_target;
+static float s_med;
+static uint8_t s_med_ok;
+#endif
+
 void spec_agc_target(const float *db, uint32_t n, float *out_min, float *out_max)
 {
     const float escala = (float)AGC_BUCKETS / (SPEC_AGC_DB_CEIL - SPEC_AGC_DB_FLOOR);
@@ -49,6 +56,9 @@ void spec_agc_target(const float *db, uint32_t n, float *out_min, float *out_max
         uint32_t antes = acc;
         acc += s_hist[i];
         if (antes <= meta_lo && acc > meta_lo) { p_lo = bucket_to_db(i); }
+#ifdef CHIP_APM32F407
+        if (antes <= n / 2U && acc > n / 2U)   { s_med_target = bucket_to_db(i); }
+#endif
         if (antes <= meta_hi && acc > meta_hi) { p_hi = bucket_to_db(i); break; }
     }
 
@@ -78,4 +88,15 @@ void spec_agc_step(const float *db, uint32_t n, float *db_min, float *db_max)
     spec_agc_target(db, n, &tmin, &tmax);
     *db_min += (tmin - *db_min) * SPEC_AGC_SMOOTH_ALPHA;
     *db_max += (tmax - *db_max) * SPEC_AGC_SMOOTH_ALPHA;
+#ifdef CHIP_APM32F407
+    if (!s_med_ok) { s_med = s_med_target; s_med_ok = 1U; }
+    s_med += (s_med_target - s_med) * SPEC_AGC_SMOOTH_ALPHA;
+#endif
 }
+
+#ifdef CHIP_APM32F407
+float spec_agc_mediana(void)
+{
+    return s_med;
+}
+#endif

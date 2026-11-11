@@ -84,6 +84,12 @@
  */
 void spec_agc_step(const float *db, uint32_t n, float *db_min, float *db_max);
 
+#ifdef CHIP_APM32F407
+/* Smoothed median of the trace seen by spec_agc_step(): roughly the noise floor, since signals are a minority of
+ * the bins. Only meaningful while auto scale runs. APM32 build only. */
+float spec_agc_mediana(void);
+#endif
+
 /*
  * La ventana que pide un cuadro, sin suavizar ni recortar contra la
  * anterior. Esta separada de spec_agc_step() para poder comprobarla

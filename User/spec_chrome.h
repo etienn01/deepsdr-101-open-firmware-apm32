@@ -61,6 +61,9 @@ typedef struct {
     /* --- eje vertical --- */
     float       db_min;
     float       db_max;
+#ifdef CHIP_APM32F407
+    float       wf_min;      /* bottom of the waterfall colour legend: the waterfall's own colour floor (APM32 build) */
+#endif
 
     /* --- eje horizontal --- */
     uint32_t    center_hz;      /* frecuencia en el centro del PANEL */
