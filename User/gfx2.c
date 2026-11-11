@@ -1265,6 +1265,22 @@ void gfx2_text_in(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w,
  */
 /* Widens one stored row of src_w palette indices to w pixels (src_w <= w): pixel i takes index i * src_w / w,
  * stepped exactly without a division per pixel. */
+#ifdef CHIP_APM32F407
+/* wf_ensancha(), but straight to the panel: one row converted and written in the same pass, no band buffer. */
+static void wf_envia(int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *cmap)
+{
+    int16_t i;
+    int32_t acc = 0;
+    const uint8_t *p = sp;
+
+    for (i = 0; i < w; i++) {
+        rm68120_dato(cmap[*p]);
+        acc += src_w;
+        if (acc >= w) { acc -= w; p++; }
+    }
+}
+#endif
+
 static void wf_ensancha(uint16_t *dp, int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *cmap)
 {
     int16_t i;
@@ -1336,6 +1352,26 @@ void gfx2_wf_blit(int16_t x, int16_t y, int16_t w, int16_t rows,
         return;
     }
 
+#ifdef CHIP_APM32F407
+    /*
+     * APM32 build (no IPA): one window for the whole waterfall and each row converted while it is written, instead
+     * of converting a band into s_band and reading it back pixel by pixel. The CPU works out the next pixel while
+     * the panel bus takes the previous one. The drawn rectangle is still reported to the spy, once.
+     */
+    {
+        int16_t r;
+        if (s_chivato) {
+            s_chivato((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + rows - 1));
+        }
+        rm68120_set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + rows - 1));
+        for (r = 0; r < rows; r++) {
+            int16_t src = (int16_t)((head + r / WATERFALL_VSCALE) % (rows / WATERFALL_VSCALE));
+            wf_envia(w, &idx[(int32_t)src * stride], src_w, cmap);
+        }
+        gfx2_banda_suelta();
+        return;
+    }
+#endif
     while (done < rows) {
         int16_t chunk = (int16_t)(rows - done);
         int16_t r, i;
