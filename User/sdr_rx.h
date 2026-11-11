@@ -127,6 +127,27 @@ uint32_t sdr_rx_get_block_samples(void);
 uint32_t sdr_rx_poll_block_iq(int16_t *i_out, int16_t *q_out, uint32_t max_n);
 
 /*
+ * Panadapter over TWO consecutive blocks (APM32 build by default). At 48 and 96 kHz a block is 256 samples, so a
+ * one-block FFT gives 256 bins (375 Hz per bin at 96 kHz). The RX interrupt keeps a de-interleaved copy of the last
+ * two blocks, and sdr_rx_poll_pan_iq() returns them as one contiguous 2 x 256 window: a 512-point FFT, 187.5 Hz per
+ * bin. Joining two blocks fetched by two polls does not work: polls are 10-35 ms apart, so the halves would not be
+ * contiguous (see fft_tam_iq() in fft.c).
+ */
+#ifndef SDR_RX_PAN_TWO_BLOCKS
+#ifdef CHIP_APM32F407
+#define SDR_RX_PAN_TWO_BLOCKS 1
+#else
+#define SDR_RX_PAN_TWO_BLOCKS 0
+#endif
+#endif
+#if SDR_RX_PAN_TWO_BLOCKS
+/* Same contract as sdr_rx_poll_block_iq() (consumes the pending block note), but fills 2 x SDR_RX_BLOCK_SAMPLES
+ * samples. Returns that count, or 0 if no new block or not two consecutive ones yet (after a restart, a missed
+ * interrupt, or when the block size is not SDR_RX_BLOCK_SAMPLES). */
+uint32_t sdr_rx_poll_pan_iq(int16_t *i_out, int16_t *q_out);
+#endif
+
+/*
  * Registers a hook called from the RX DMA interrupt for EVERY
  * completed block, with a pointer to the raw interleaved half (L/R =
  * I/Q, sdr_rx_get_block_samples() frames). This is the real-time audio

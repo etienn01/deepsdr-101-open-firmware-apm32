@@ -39251,8 +39251,18 @@ static void sdr_spectrum_waterfall_tick(void)
                 s_zoom_acc_count = 0U;
                 s_db_traza_lista = 0U;
                 s_db_frame_listo = 0U;
+#if SDR_RX_PAN_TWO_BLOCKS
+                s_wf_frames      = 0U;   /* the slow waterfall speeds accumulate per bin */
+#endif
             }
         }
+#if SDR_RX_PAN_TWO_BLOCKS
+        if (dos_bloques && (s_fft_bins == nfft)) {
+            if (sdr_rx_poll_pan_iq(s_rx_i, s_rx_q) == 0U) {
+                return;
+            }
+        } else
+#endif
         if (sdr_rx_poll_block_iq(s_rx_i, s_rx_q, s_fft_bins) == 0U) {
             return;
         }
@@ -40125,7 +40135,7 @@ static void sdr_spectrum_waterfall_tick(void)
                                 : 1.0f;
             /* La escala, una vez por las dos lineas: lleva la division.
              * Ver spectrum_colormap_escala(). */
-            float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, s_db_max);
+            float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, WF_COLOR_TOP);
 
             /* Primera mitad del frame -o el frame entero, si no hay dos
              * medidas que repartir. */

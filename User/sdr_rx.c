@@ -54,6 +54,29 @@ static void (*s_block_hook)(const int16_t *raw_interleaved) = 0;
 static volatile uint8_t  s_pending_half = 0xFFU; /* 0xFF = none */
 static volatile uint32_t s_hook_runs = 0U;       /* diagnostics */
 
+#if SDR_RX_PAN_TWO_BLOCKS
+/* The last two blocks, de-interleaved, for sdr_rx_poll_pan_iq(). CPU-only buffers, so in CCM. s_pan_seq counts
+ * the blocks stored (the newest is in slot (s_pan_seq - 1) & 1); s_pan_run counts how many of them are consecutive
+ * (reset by a restart or a missed interrupt). */
+static int16_t s_pan_i[2][SDR_RX_BLOCK_SAMPLES] __attribute__((section(".tcmram")));
+static int16_t s_pan_q[2][SDR_RX_BLOCK_SAMPLES] __attribute__((section(".tcmram")));
+static volatile uint32_t s_pan_seq;
+static volatile uint32_t s_pan_run;
+
+static void pan_guarda(const int16_t *raw, uint8_t gap)
+{
+    uint32_t slot = s_pan_seq & 1U;
+    uint32_t n;
+
+    for (n = 0U; n < SDR_RX_BLOCK_SAMPLES; n++) {
+        s_pan_i[slot][n] = raw[2U * n];
+        s_pan_q[slot][n] = raw[2U * n + 1U];
+    }
+    s_pan_seq = s_pan_seq + 1U;
+    s_pan_run = gap ? 1U : (s_pan_run + 1U);
+}
+#endif
+
 /*
  * Shared DMA-arming step - used by BOTH sdr_rx_init() (which does the
  * one-time RXORERR bring-up around it) and sdr_rx_start() (which
@@ -266,6 +289,9 @@ void sdr_rx_bringup(uint32_t block_samples)
      * would otherwise reference stale buffer geometry (see
      * sdr_rx_stop()'s own comment). */
     s_pending_half = 0xFFU;
+#if SDR_RX_PAN_TWO_BLOCKS
+    s_pan_run = 0U;
+#endif
 
     sdr_rx_resync_spi();
 
@@ -434,6 +460,9 @@ void sdr_rx_stop(void)
      * the wrong (stale or about-to-change) block size by
      * sdr_rx_poll_block_iq() on the very next poll. */
     s_pending_half = 0xFFU;
+#if SDR_RX_PAN_TWO_BLOCKS
+    s_pan_run = 0U;
+#endif
 }
 
 /*
@@ -1020,6 +1049,13 @@ void DMA0_Channel3_IRQHandler(void)
             s_hook_runs++;
         }
     }
+#if SDR_RX_PAN_TWO_BLOCKS
+    /* After the audio: keep a copy for the two-block panadapter. Both flags at once = a block was missed, so the
+     * next window must not join across the gap. */
+    if ((half != 0) && (s_block_samples == SDR_RX_BLOCK_SAMPLES)) {
+        pan_guarda(half, (uint8_t)(htf && ftf));
+    }
+#endif
 }
 
 uint32_t sdr_rx_poll_block_iq(int16_t *i_out, int16_t *q_out, uint32_t max_n)
@@ -1061,3 +1097,39 @@ uint32_t sdr_rx_poll_block_iq(int16_t *i_out, int16_t *q_out, uint32_t max_n)
     (void)s_last_half_delivered; /* superseded by the ISR model */
     return 1U;
 }
+
+#if SDR_RX_PAN_TWO_BLOCKS
+uint32_t sdr_rx_poll_pan_iq(int16_t *i_out, int16_t *q_out)
+{
+    uint8_t half;
+    uint32_t primask, seq, run, n, intento;
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    half = s_pending_half;
+    s_pending_half = 0xFFU;
+    __set_PRIMASK(primask);
+    if ((half == 0xFFU) || (s_block_samples != SDR_RX_BLOCK_SAMPLES)) {
+        return 0U;
+    }
+    /* Copy the older slot, then the newer one. A new block landing meanwhile (one every 2.7 ms at 96 kHz, the copy
+     * takes a few microseconds) would overwrite the older slot: if the count moved, copy again, at most twice. */
+    for (intento = 0U; intento < 2U; intento++) {
+        seq = s_pan_seq;
+        run = s_pan_run;
+        if (run < 2U) {
+            return 0U;
+        }
+        for (n = 0U; n < SDR_RX_BLOCK_SAMPLES; n++) {
+            i_out[n] = s_pan_i[(seq - 2U) & 1U][n];
+            q_out[n] = s_pan_q[(seq - 2U) & 1U][n];
+            i_out[SDR_RX_BLOCK_SAMPLES + n] = s_pan_i[(seq - 1U) & 1U][n];
+            q_out[SDR_RX_BLOCK_SAMPLES + n] = s_pan_q[(seq - 1U) & 1U][n];
+        }
+        if (s_pan_seq == seq) {
+            return 2U * SDR_RX_BLOCK_SAMPLES;
+        }
+    }
+    return 0U;
+}
+#endif
