@@ -88,7 +88,7 @@
  */
 typedef union
 {
-    uint8_t waterfall_buf[WATERFALL_ROWS][WATERFALL_WIDTH];
+    uint8_t waterfall_buf[WATERFALL_STORE_ROWS][WATERFALL_STORE_WIDTH];
 
     /*
      * EL TERCER INQUILINO, QUE AHORA ES EL QUE MANDA - 11/10/2026.

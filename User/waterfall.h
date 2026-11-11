@@ -64,11 +64,37 @@
                                   working buffers into TCM RAM (see fft.c's
                                   TCMRAM_BSS comment) to make room for this
                                   buffer's own ~18KB main-RAM growth. */
+#ifndef WATERFALL_ROWS
 #define WATERFALL_ROWS   72    /* filas visibles simultaneamente, ver presupuesto de RAM arriba
                                   (756*72*1 = 54.432 B: un byte por pixel, indice de paleta.
                                    Aqui ponia 672*72*2 = ~97KB, que es la cuenta
                                    de cuando llevaba 16 bits por pixel y 672 de
                                    ancho. Corregido el 27/10/2026.) */
+#endif
+
+/*
+ * Rows actually stored in RAM: WATERFALL_ROWS / WATERFALL_VSCALE, each one drawn WATERFALL_VSCALE times. The APM32
+ * build (128 KB of RAM) uses 2: half the memory, same 72-row panel, so the screen layout and touch areas, which
+ * are computed from WATERFALL_ROWS, stay exactly the same. Two incoming lines are averaged into one.
+ */
+#ifndef WATERFALL_VSCALE
+#define WATERFALL_VSCALE 1
+#endif
+#define WATERFALL_STORE_ROWS (WATERFALL_ROWS / WATERFALL_VSCALE)
+
+/*
+ * Bytes stored per row. Each displayed line is built from at most FFT_BINS_IQ (512) FFT bins, every pixel x
+ * copying bin x * nbins / WATERFALL_WIDTH, so storing one byte per bin instead of one per pixel loses nothing.
+ * The APM32 build stores 512 (72 rows in 36,864 bytes instead of 54,432); the default keeps one per pixel.
+ *   stored column j  <- pixel WF_COL_SOURCE(j) of the incoming line
+ *   pixel x on screen <- stored column x * WATERFALL_STORE_WIDTH / WATERFALL_WIDTH
+ */
+#ifndef WATERFALL_STORE_WIDTH
+#define WATERFALL_STORE_WIDTH WATERFALL_WIDTH
+#endif
+#define WF_COL_SOURCE(j) \
+    ((((uint32_t)(j) * WATERFALL_WIDTH) + WATERFALL_STORE_WIDTH - 1U) / WATERFALL_STORE_WIDTH)
+
 
 /* Reserva el buffer (en .bss, RAM principal) y lo pone a negro. Llamar
  * una vez al arrancar, antes del primer waterfall_push_line(). */

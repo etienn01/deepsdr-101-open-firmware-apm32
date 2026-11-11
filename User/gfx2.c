@@ -1,4 +1,5 @@
 #include "gfx2.h"
+#include "waterfall.h"   /* WATERFALL_VSCALE */
 #include "rm68120_exmc.h"
 #include <string.h>
 
@@ -1262,8 +1263,26 @@ void gfx2_text_in(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w,
  * waterfall_blit() -, que escribe 756 puntos donde la desplazada escribe
  * 54.432. Setenta y dos veces menos.
  */
+/* Widens one stored row of src_w palette indices to w pixels (src_w <= w): pixel i takes index i * src_w / w,
+ * stepped exactly without a division per pixel. */
+static void wf_ensancha(uint16_t *dp, int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *cmap)
+{
+    int16_t i;
+    if (src_w == w) {
+        for (i = 0; i < w; i++) dp[i] = cmap[sp[i]];
+    } else {
+        int32_t acc = 0;
+        const uint8_t *p = sp;
+        for (i = 0; i < w; i++) {
+            dp[i] = cmap[*p];
+            acc += src_w;
+            if (acc >= w) { acc -= w; p++; }
+        }
+    }
+}
+
 void gfx2_wf_fila(int16_t x, int16_t y, int16_t w,
-                  const uint8_t *idx, const uint16_t *cmap)
+                  const uint8_t *idx, int16_t src_w, const uint16_t *cmap)
 {
     int16_t i;
 
@@ -1272,7 +1291,7 @@ void gfx2_wf_fila(int16_t x, int16_t y, int16_t w,
     if (gfx2_banda_coge() == (uint16_t *)0) {
         return;
     }
-    for (i = 0; i < w; i++) { s_band[i] = cmap[idx[i]]; }
+    wf_ensancha(s_band, w, idx, src_w, cmap);
 
     if (s_chivato) {
         s_chivato((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)y);
@@ -1283,7 +1302,7 @@ void gfx2_wf_fila(int16_t x, int16_t y, int16_t w,
 }
 
 void gfx2_wf_blit(int16_t x, int16_t y, int16_t w, int16_t rows,
-                  const uint8_t *idx, int16_t stride, int16_t head,
+                  const uint8_t *idx, int16_t stride, int16_t src_w, int16_t head,
                   const uint16_t *cmap)
 {
     /* Se vuelca por trozos de GFX2_BAND_H filas reutilizando la banda, de
@@ -1325,10 +1344,11 @@ void gfx2_wf_blit(int16_t x, int16_t y, int16_t w, int16_t rows,
         if (chunk > GFX2_BAND_H) chunk = GFX2_BAND_H;
 
         for (r = 0; r < chunk; r++) {
-            int16_t src = (int16_t)((head + done + r) % rows);
+            /* `rows` is the panel height; with WATERFALL_VSCALE > 1 each stored row covers several of them */
+            int16_t src = (int16_t)((head + (done + r) / WATERFALL_VSCALE) % (rows / WATERFALL_VSCALE));
             const uint8_t *sp = &idx[(int32_t)src * stride];
             uint16_t *dp = &s_band[(int32_t)r * w];
-            for (i = 0; i < w; i++) dp[i] = cmap[sp[i]];
+            wf_ensancha(dp, w, sp, src_w, cmap);
         }
 
         if (s_chivato) {

@@ -118,9 +118,35 @@ void waterfall_push_line(const uint8_t *line)
 
     /* Retrocede el head (la fila que era la mas antigua pasa a ser la
      * nueva fila 0) y escribe encima. Solo 1 fila copiada. */
-    s_head = (uint16_t)((s_head + WATERFALL_ROWS - 1U) % WATERFALL_ROWS);
+#if WATERFALL_VSCALE > 1
+    {
+        /* One stored row per WATERFALL_VSCALE incoming lines: the first starts a new row, the next ones are
+         * averaged into it. A per-pixel max was tried first: it lifted the noise floor and washed the waterfall out. */
+        static uint8_t s_fase;
+        if (s_fase != 0U) {
+            uint8_t *row = &s_buf[s_head][0];
+            uint16_t i;
+            for (i = 0U; i < WATERFALL_STORE_WIDTH; i++) {
+                row[i] = (uint8_t)(((uint16_t)row[i] + line[WF_COL_SOURCE(i)] + 1U) / 2U);
+            }
+            if (s_pend == 0U) { s_pend = 1U; }
+            s_fase = (uint8_t)((s_fase + 1U) % WATERFALL_VSCALE);
+            return;
+        }
+        s_fase = 1U;
+    }
+#endif
+    s_head = (uint16_t)((s_head + WATERFALL_STORE_ROWS - 1U) % WATERFALL_STORE_ROWS);
+#if WATERFALL_STORE_WIDTH == WATERFALL_WIDTH
     memcpy(&s_buf[s_head][0], line, WATERFALL_WIDTH);
-    if (s_pend < (uint8_t)WATERFALL_ROWS) { s_pend++; }
+#else
+    {
+        uint8_t *row = &s_buf[s_head][0];
+        uint16_t j;
+        for (j = 0U; j < WATERFALL_STORE_WIDTH; j++) { row[j] = line[WF_COL_SOURCE(j)]; }
+    }
+#endif
+    if (s_pend < (uint8_t)WATERFALL_STORE_ROWS) { s_pend++; }
 }
 
 /* ---------------------------------------------------------------------
@@ -232,7 +258,7 @@ void waterfall_pinta_en(gfx2_surf_t *sf, int16_t px, int16_t py,
     if (dx < 0 || (int32_t)dx + WATERFALL_WIDTH > sf->w) { return; }
 
     for (r = y0; r < y1; r++) {
-        uint16_t fila = (uint16_t)((s_head + (uint16_t)r) % WATERFALL_ROWS);
+        uint16_t fila = (uint16_t)((s_head + (uint16_t)r / WATERFALL_VSCALE) % WATERFALL_STORE_ROWS);
         const uint8_t *src = &s_buf[fila][0];
         int16_t dy = (int16_t)((int32_t)py + r - sf->y);
         uint16_t *dst;
@@ -241,7 +267,7 @@ void waterfall_pinta_en(gfx2_surf_t *sf, int16_t px, int16_t py,
         if (dy < 0 || dy >= sf->h) { continue; }
         dst = &sf->px[(int32_t)dy * sf->w + dx];
         for (c = 0U; c < (uint16_t)WATERFALL_WIDTH; c++) {
-            dst[c] = lut[src[c]];
+            dst[c] = lut[src[((uint32_t)c * WATERFALL_STORE_WIDTH) / WATERFALL_WIDTH]];
         }
     }
 }
@@ -337,9 +363,12 @@ void waterfall_blit(uint16_t x, uint16_t y, const uint16_t *lut)
          * y las anteriores van subiendo de indice. */
         uint8_t k;
         for (k = 0U; k < s_pend; k++) {
-            uint16_t f = (uint16_t)((s_head + k) % WATERFALL_ROWS);
-            gfx2_wf_fila((int16_t)x, (int16_t)(y + f), WATERFALL_WIDTH,
-                         &s_buf[f][0], lut);
+            uint16_t f = (uint16_t)((s_head + k) % WATERFALL_STORE_ROWS);
+            uint8_t v;
+            for (v = 0U; v < (uint8_t)WATERFALL_VSCALE; v++) {
+                gfx2_wf_fila((int16_t)x, (int16_t)(y + f * WATERFALL_VSCALE + v), WATERFALL_WIDTH,
+                             &s_buf[f][0], WATERFALL_STORE_WIDTH, lut);
+            }
         }
         s_pend = 0U;
         return;
@@ -355,13 +384,14 @@ void waterfall_blit(uint16_t x, uint16_t y, const uint16_t *lut)
      * Desde el 24/09/2026 hay ademas un camino por IPA. Se intenta ese
      * primero y, si no puede, se cae al de siempre - que no es un apano:
      * es el que hay que poder comparar contra el otro sin recompilar. */
-    if (ipa_blit_hay()) {
+    /* the IPA path neither scales rows nor widens stored ones */
+    if ((WATERFALL_VSCALE == 1) && (WATERFALL_STORE_WIDTH == WATERFALL_WIDTH) && ipa_blit_hay()) {
         if (wf_blit_ipa(x, y, lut)) {
             return;
         }
     }
     gfx2_wf_blit((int16_t)x, (int16_t)y, WATERFALL_WIDTH, WATERFALL_ROWS,
-                 &s_buf[0][0], WATERFALL_WIDTH, (int16_t)s_head, lut);
+                 &s_buf[0][0], WATERFALL_STORE_WIDTH, WATERFALL_STORE_WIDTH, (int16_t)s_head, lut);
 }
 
 uint8_t *waterfall_row(uint16_t row)
@@ -369,5 +399,5 @@ uint8_t *waterfall_row(uint16_t row)
     if (row >= WATERFALL_ROWS) {
         return NULL;
     }
-    return &s_buf[(row + s_head) % WATERFALL_ROWS][0];
+    return &s_buf[(row / WATERFALL_VSCALE + s_head) % WATERFALL_STORE_ROWS][0];
 }
