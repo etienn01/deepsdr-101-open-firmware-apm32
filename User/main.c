@@ -127,6 +127,7 @@ static void speaker_pa_set_enabled(uint8_t on);
 #ifdef CHIP_APM32F407
 static void speaker_pa_hold(uint8_t hold);
 static float wf_color_floor(float db_min);
+static float wf_color_top(float floor_db, float db_max);
 #endif
 static void systick_delay_init(void);
 /*
@@ -9058,7 +9059,8 @@ static void chrome_sync(spec_chrome_t *c)
     c->db_min    = s_db_min;
     c->db_max    = s_db_max;
 #ifdef CHIP_APM32F407
-    c->wf_min    = wf_color_floor(s_db_min);   /* the legend shows the waterfall's own colour floor */
+    c->wf_min    = wf_color_floor(s_db_min);   /* the legend shows the waterfall's own colour scale */
+    c->wf_max    = wf_color_top(c->wf_min, s_db_max);
 #endif
     c->center_hz = panel_center_hz;
     c->span_hz   = full_span_hz;
@@ -39116,8 +39118,29 @@ static float wf_color_floor(float db_min)
     return (f > db_min) ? f : db_min;
 }
 #define WF_COLOR_FLOOR wf_color_floor(s_db_min)
+/*
+ * APM32 build: the top of the waterfall's colour scale is the colour floor plus APM32_WF_RANGE_DB (strong signals
+ * saturate) instead of the spectrum's own top, which a strong station pushes 55-60 dB above the noise and which
+ * leaves weak signals in the darkest tenth of the palette. 35 dB was preferred on the radio over the spectrum's
+ * range; 0 = follow the spectrum, as upstream.
+ */
+#ifndef APM32_WF_RANGE_DB
+#define APM32_WF_RANGE_DB 35
+#endif
+static float wf_color_top(float floor_db, float db_max)
+{
+#if APM32_WF_RANGE_DB > 0
+    float t = floor_db + (float)APM32_WF_RANGE_DB;
+    if (s_spec_agc_enabled && (t < db_max)) { return t; }
+#else
+    (void)floor_db;
+#endif
+    return db_max;
+}
+#define WF_COLOR_TOP wf_color_top(WF_COLOR_FLOOR, s_db_max)
 #else
 #define WF_COLOR_FLOOR s_db_min
+#define WF_COLOR_TOP s_db_max
 #endif
 
 __attribute__((noinline))
@@ -39238,9 +39261,17 @@ static void sdr_spectrum_waterfall_tick(void)
      */
     {
         uint32_t nblk = sdr_rx_get_block_samples();
+#if SDR_RX_PAN_TWO_BLOCKS
+        /* Unzoomed at 48/96 kHz: one FFT over the last two blocks (512 points), see sdr_rx_poll_pan_iq(). The
+         * zoom keeps one block: its decimators are built for 256. */
+        uint8_t dos_bloques = (uint8_t)((s_spec_zoom == SPEC_ZOOM_1X) && (nblk == SDR_RX_BLOCK_SAMPLES));
+        uint32_t nfft = dos_bloques ? (2U * nblk) : nblk;
+#else
+        uint32_t nfft = nblk;
+#endif
 
-        if (nblk != s_fft_bins) {
-            fft_tam_iq(nblk);
+        if (nfft != s_fft_bins) {
+            fft_tam_iq(nfft);
             /* Por el resultado y no por lo pedido: fft_tam_iq() ignora lo
              * que no sea potencia de dos dentro de su rango, y si lo
              * ignora aqui no ha cambiado nada que tirar. */
@@ -40177,7 +40208,7 @@ static void sdr_spectrum_waterfall_tick(void)
 
             if (s_wf_frames >= k_wf[s_wf_vel].div) {
                 float inv = 1.0f / (float)s_wf_frames;
-                float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, s_db_max);
+                float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, WF_COLOR_TOP);
 
                 for (x = 0; x < WATERFALL_WIDTH; x++) {
                     uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;

@@ -336,7 +336,11 @@ static void draw_wf_legend(gfx2_surf_t *s, void *ctx)
     /* Sin contorno. Lo llevaba, y en la placa se veia a trozos: la rampa de
      * color ya es una forma cerrada y no necesita que nadie la enmarque. */
 
+#ifdef CHIP_APM32F407
+    (void)fmt_dec(buf, redondea(st->wf_max), 0, 0);
+#else
     (void)fmt_dec(buf, redondea(st->db_max), 0, 0);
+#endif
     gfx2_text_in(s, 0, (int16_t)(by - 15), (int16_t)(SPC_GUT_W - 2), buf,
                  &font_ui_14, gfx2_rgb(PAL_INK_DIM), GFX2_ALIGN_C);
 
@@ -522,6 +526,7 @@ uint8_t spec_chrome_axis_changed(const spec_chrome_t *a, const spec_chrome_t *b)
     if (redondea(a->db_min) != redondea(b->db_min)) { return 1U; }
 #ifdef CHIP_APM32F407
     if (redondea(a->wf_min) != redondea(b->wf_min)) { return 1U; }
+    if (redondea(a->wf_max) != redondea(b->wf_max)) { return 1U; }
 #endif
     for (gi = 1U; gi <= SPC_GRID_ROWS; gi++) {
         if (fila_db(a, gi) != fila_db(b, gi)) { return 1U; }

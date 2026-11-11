@@ -63,6 +63,7 @@ typedef struct {
     float       db_max;
 #ifdef CHIP_APM32F407
     float       wf_min;      /* bottom of the waterfall colour legend: the waterfall's own colour floor (APM32 build) */
+    float       wf_max;      /* top of the waterfall colour legend (APM32 build) */
 #endif
 
     /* --- eje horizontal --- */
