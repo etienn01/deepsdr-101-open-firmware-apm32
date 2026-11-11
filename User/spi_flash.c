@@ -856,7 +856,12 @@ void spi_flash_write_block_4k(uint32_t block_addr, const uint8_t *data4k)
 #define BORRADOR_SECTOR  0U
 #define BORRADOR_FAT     1U
 
+#ifdef CHIP_APM32F407
+/* APM32 build: CPU-only buffer (this driver uses no DMA), so it can live in the CCM and free main RAM */
+static uint8_t  s_sector[FLASH_SECTOR_SIZE] __attribute__((section(".tcmram")));
+#else
 static uint8_t  s_sector[FLASH_SECTOR_SIZE];
+#endif
 static uint8_t  s_fat[FAT_BYTES_MAX];
 /* Declarados arriba, antes de spi_flash_init(), que los suelta. */
 static uint16_t s_borrador_choques;
@@ -2917,7 +2922,12 @@ typedef enum {
  * blocking call with no need to persist across ticks, this one is the
  * opposite case). Reused for BOTH phases (data block, then entry
  * block) one at a time, never both simultaneously. */
+#ifdef CHIP_APM32F407
+/* APM32 build: in the 4 KB backup SRAM (section .bkpsram, zeroed and enabled in SystemInit), CPU-only use */
+static uint8_t s_async_scratch[FLASH_SECTOR_SIZE] __attribute__((section(".bkpsram")));
+#else
 static uint8_t s_async_scratch[FLASH_SECTOR_SIZE];
+#endif
 static spi_flash_async_block_t s_async_block_op;
 static uint8_t s_async_phase = (uint8_t)ASAVE_IDLE;
 
