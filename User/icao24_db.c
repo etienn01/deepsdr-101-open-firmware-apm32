@@ -345,8 +345,8 @@ void icao24_db_report(void)
         debug_print("icao24_db: ICAO24.BIN ready\n");
         debug_print_dec("icao24_db:   aircraft", s_n_aircraft);
         debug_print_dec("icao24_db:   type names", s_n_types);
-        debug_print_dec("icao24_db:   file size (bytes)", s_file.size);
-        debug_print_dec("icao24_db:   fragments (max 12)", s_file.extent_count);
+        /* s_file no longer exists (debug builds only) */ (void)0; // debug_print_dec("icao24_db:   file size (bytes)", s_file.size);
+        /* s_file no longer exists (debug builds only) */ (void)0; // debug_print_dec("icao24_db:   fragments (max 12)", s_file.extent_count);
         debug_print_dec("icao24_db:   header at byte", s_base);
     } else {
         debug_print("icao24_db: NOT available until the next reboot. Reason:\n");
@@ -357,9 +357,9 @@ void icao24_db_report(void)
              * ASCII digits (the PortaPack icao24.db, not the converted file); FF FF FF FF = flash
              * bytes never written (the USB copy did not reach the chip); 00 00 ... = zeros. If the
              * magic turns up at a non-zero offset, the data is shifted relative to the file table. */
-            debug_print_dec("icao24_db:   file found: size (bytes)", s_file.size);
-            debug_print_dec("icao24_db:   file found: first cluster", (uint32_t)s_file.extents[0].first_cluster);
-            debug_print_dec("icao24_db:   file found: fragments", s_file.extent_count);
+            /* s_file no longer exists (debug builds only) */ (void)0; // debug_print_dec("icao24_db:   file found: size (bytes)", s_file.size);
+            /* s_file no longer exists (debug builds only) */ (void)0; // debug_print_dec("icao24_db:   file found: first cluster", (uint32_t)s_file.extents[0].first_cluster);
+            /* s_file no longer exists (debug builds only) */ (void)0; // debug_print_dec("icao24_db:   file found: fragments", s_file.extent_count);
             i24_print_hexbytes("icao24_db:   first 16 bytes (offset 0):    ", s_hdr, I24_HDR_LEN);
             i24_print_hexbytes("icao24_db:   16 bytes at offset 4096:      ", s_hdr2, I24_HDR_LEN);
             i24_scan_for_magic();
