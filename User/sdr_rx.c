@@ -354,6 +354,18 @@ void sdr_rx_bringup(uint32_t block_samples)
             }
         }
     }
+#endif
+#if defined(CHIP_APM32F407) && !DEBUG_UART_ENABLED
+    /*
+     * APM32 build: keep the ~70 ms pause that the debug block above makes (2,000,000 NOP iterations). Without it
+     * WFM came up as noise on the APM32 at 192 MHz, while the debug build worked: the caller configures the
+     * codec's PLL just before this and starts BCLK/WCLK right after, so the codec PLL most likely needs this time
+     * to lock first. To be replaced by a proper wait once confirmed.
+     */
+    {
+        volatile uint32_t d;
+        for (d = 0; d < 2000000U; d++) { __NOP(); }
+    }
 #endif /* DEBUG_UART_ENABLED */
 }
 

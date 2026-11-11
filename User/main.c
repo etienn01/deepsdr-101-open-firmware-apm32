@@ -1950,6 +1950,9 @@ static uint32_t s_ft8_total_ant;
 static mapa_caja_t s_mapa_caja;
 static uint8_t     s_mapa_puesta;   /* 0 = aun no se ha colocado */
 
+#ifdef CHIP_APM32F407
+static void apm32_rx_resync(aic3204_rate_t rate, uint32_t block_samples);
+#endif
 int main(void)
 {
     /*
@@ -2468,6 +2471,9 @@ int main(void)
      * block's own header comment for why a rate-aware cold boot was
      * tried and reverted.
      */
+#ifdef CHIP_APM32F407
+    apm32_rx_resync(s_current_rate, sdr_rx_get_block_samples());   /* the cold-boot bring-up can lock out of step too */
+#endif
     debug_print("\n--- Audio: AM demodulator hook ---\n");
     /* gd32_i2s_dma_start_stream() ya corrio, mas arriba y a proposito: ver
      * alli por que tiene que ir antes de que haya reloj. */
@@ -10645,14 +10651,23 @@ static void menu_tile_zoom_callback(void *widget, ui_event_t event, void *user_d
  * Salio al quedarse el enlazado corto por 28 bytes al meter el corrector de
  * espejo I/Q. La respuesta correcta a eso no era recortar el corrector.
  */
-#if DEBUG_UART_ENABLED
+#if DEBUG_UART_ENABLED || defined(CHIP_APM32F407)   /* the APM32 build uses the check to re-sync, see apply_demod_mode() */
 /* Own buffers, sized like main.c's later s_rx_i/s_rx_q (declared much
  * further down in this file, near the spectrum polling code, so not
  * yet visible up here) - kept separate rather than reordering
  * existing declarations, to keep this change minimal and self-
  * contained. */
+#if defined(CHIP_APM32F407) && !DEBUG_UART_ENABLED
+/* APM32 release build: borrow the spectrum's I/Q block buffers (tentatively defined here, defined again further
+ * down): the check only runs while the RX chain is being restarted, never while the spectrum polls them. */
+static int16_t s_rx_i[SDR_RX_BLOCK_SAMPLES_MAX];
+static int16_t s_rx_q[SDR_RX_BLOCK_SAMPLES_MAX];
+#define s_rx_lock_check_i s_rx_i
+#define s_rx_lock_check_q s_rx_q
+#else
 static int16_t s_rx_lock_check_i[SDR_RX_BLOCK_SAMPLES_MAX];
 static int16_t s_rx_lock_check_q[SDR_RX_BLOCK_SAMPLES_MAX];
+#endif
 
 /* Waits for one fresh captured block (via the same poll the
  * spectrum/panadapter uses) and checks it for the wild-swing
@@ -10709,7 +10724,31 @@ static uint8_t rx_capture_looks_corrupted(void)
     }
     return 0U;
 }
-#endif /* DEBUG_UART_ENABLED */
+#endif /* DEBUG_UART_ENABLED || CHIP_APM32F407 */
+
+#ifdef CHIP_APM32F407
+/*
+ * APM32 build: its I2S slave sometimes locks onto the codec's frames out of step, which turns every sample into
+ * large random values (S9+20 of pure noise). If the capture looks like that, restart the codec/I2S/DMA chain the
+ * same way as a rate switch (apply_demod_mode() steps 1-7), up to three times. Called after the cold-boot bring-up
+ * and after every rate switch, with the speaker amp held muted by the caller.
+ */
+static void apm32_rx_resync(aic3204_rate_t rate, uint32_t block_samples)
+{
+    uint8_t tries;
+    for (tries = 0U; (tries < 3U) && rx_capture_looks_corrupted(); tries++) {
+        sdr_rx_stop();
+        gd32_i2s_stream_stop();
+        aic3204_rate_switch_reset();
+        gd32_i2s_init_slave(rate);
+        aic3204_configure_rate(rate);
+        sdr_rx_bringup(block_samples);
+        gd32_i2s_stream_arm(block_samples);
+        aic3204_start_bclk_wclk(rate);
+        aic3204_set_rate_power_up();
+    }
+}
+#endif
 
 /*
  * *** 05/08/2026, REWRITTEN - "full reinit instead of live resync" ***
@@ -11310,6 +11349,9 @@ static void apply_demod_mode(demod_mode_t mode)
         /* 7. ADC/DAC power up - both DMA channels already armed and
          *    waiting, so nothing overruns. */
         aic3204_set_rate_power_up();
+#ifdef CHIP_APM32F407
+        apm32_rx_resync(rate, block_samples);
+#endif
 
         /* Informational only now (see this section's header comment) -
          * no retry, just a log line confirming whether this bring-up
