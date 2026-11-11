@@ -202,6 +202,39 @@ void SystemInit (void)
      * aplicacion no llegaria a verlo nunca. El camino bueno -y el que ya
      * esta probado en la radio- es que lo mire la aplicacion.
      */
+#ifdef CHIP_APM32F407
+    {
+        /*
+         * APM32 build, rescue gesture: turning the encoder (without pressing it: a press at power-on belongs to the
+         * stock bootloader's disk mode) while the radio starts drops into the ROM DFU before any other firmware
+         * code runs, so a broken build can be replaced with the case closed. It only arms the same marker as
+         * "DFU mode" in the menu; the jump itself is the tested one just below.
+         * Runs on HSI (16 MHz, known) so the 0.3 s window does not depend on the clock the bootloader left.
+         */
+        extern uint32_t g_dfu_testigo;              /* .noinit, en dfu_salto.c */
+        volatile uint32_t i;
+        uint32_t prev, cur, edges = 0UL;
+        REG32(0x40023800UL) |= 1UL;                                     /* RCC_CR.HSION */
+        while ((REG32(0x40023800UL) & 2UL) == 0UL) { }                  /* HSIRDY */
+        REG32(0x40023808UL) &= ~3UL;                                    /* RCC_CFGR.SW = HSI */
+        while ((REG32(0x40023808UL) & 0xCUL) != 0UL) { }                /* SWS = HSI */
+        REG32(0x40023830UL) |= (1UL << 3);                              /* RCC_AHB1ENR.GPIODEN */
+        (void)REG32(0x40023830UL);
+        /* encoder A = PD13, B = PD12: inputs with pull-ups, as encoder.c sets them */
+        REG32(0x40020C00UL) &= ~((3UL << 24) | (3UL << 26));                         /* GPIOD_MODER */
+        REG32(0x40020C0CUL) = (REG32(0x40020C0CUL) & ~((3UL << 24) | (3UL << 26)))
+                            | (1UL << 24) | (1UL << 26);                             /* GPIOD_PUPDR */
+        for (i = 0UL; i < 2000UL; i++) { __NOP(); }
+        prev = (REG32(0x40020C10UL) >> 12) & 3UL;                                    /* GPIOD_IDR */
+        for (i = 0UL; i < 600000UL; i++) {                              /* about 0.3 s at 16 MHz */
+            cur = (REG32(0x40020C10UL) >> 12) & 3UL;
+            if (cur != prev) { edges++; prev = cur; }
+        }
+        if (edges >= 4UL) {
+            g_dfu_testigo = 0xDF0DF0DFUL;
+        }
+    }
+#endif
     {
         extern uint32_t g_dfu_testigo;              /* .noinit, en dfu_salto.c */
 
