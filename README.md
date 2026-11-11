@@ -1,3 +1,8 @@
+> **This fork: APM32F407 port.** The `apm32` branch runs this firmware on DeepSDR 101 clones built around the
+> Geehy APM32F407 (HamGeek DSP-01, some "SDR101"). Tested on one unit; FT8, WSPR, HFDL, STANAG and the maps are
+> left out for lack of RAM. Hardware checks, build, flashing and recovery: **[APM32.md](APM32.md)**.
+> Everything below is the upstream README, for the GD32F450/F470.
+
 # DEEPSDR 101 — firmware abierto
 
 > ### *In memory of Carlos EB4DYL*
