@@ -57,7 +57,11 @@
  * el cargador no puede borrarse a si mismo) y estar alineada a 512 por lo
  * menos (el VTOR).  0x08008000 cumple las dos: es el principio del S2.
  */
+#ifdef CHIP_APM32F407
+#define CARGA_APP_BASE      0x08020000UL    /* APM32 build: behind the stock bootloader, see APM32F407VG_FLASH.ld */
+#else
 #define CARGA_APP_BASE      0x08008000UL
+#endif
 /*
  * HASTA DONDE BORRA EL CARGADOR, Y DEPENDE DEL CHIP - 16/10/2026.
  *
@@ -80,8 +84,8 @@
  * el SCB->VTOR- los vigila tools/mapa.py, y por eso la variante lleva su
  * propio .ld en vez de parchear el de siempre.
  */
-#ifdef CHIP_F470VG
-#define CARGA_BORRA_HASTA   0x08100000UL    /* 1024 kB: GD32F470VGT6 */
+#if defined(CHIP_F470VG) || defined(CHIP_APM32F407)
+#define CARGA_BORRA_HASTA   0x08100000UL    /* 1024 kB: GD32F470VGT6, APM32F407VGT6 */
 #else
 #define CARGA_BORRA_HASTA   0x08080000UL    /*  512 kB: GD32F450VET6 */
 #endif

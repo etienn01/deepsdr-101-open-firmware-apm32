@@ -20,7 +20,12 @@
  * PCLK1 = 99,84 MHz. En modo conmutacion el periodo de SALIDA son DOS
  * periodos del contador, de ahi el 2.
  */
+#ifdef CHIP_APM32F407
+extern uint32_t SystemCoreClock;
+#define LO_GEN_TIMER_CLK_HZ (SystemCoreClock / 2UL)   /* APB1 timer clock on the APM32 build */
+#else
 #define LO_GEN_TIMER_CLK_HZ 99840000UL
+#endif
 #define LO_GEN_CUENTAS_MAX  65536UL   /* ARR es de 16 bits: ARR+1 <= 65536 */
 
 /* Lo que sale de verdad con un periodo de `cuentas` cuentas de contador. */

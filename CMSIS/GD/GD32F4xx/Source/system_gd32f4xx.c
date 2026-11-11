@@ -97,7 +97,33 @@ static void system_clock_200m_irc16m(void);
 uint32_t SystemCoreClock = __SYSTEM_CLOCK_200M_PLL_8M_HXTAL;
 static void system_clock_200m_8m_hxtal(void);
 #elif defined (__SYSTEM_CLOCK_200M_PLL_25M_HXTAL)
+#ifdef CHIP_APM32F407
+/*
+ * APM32F407 system clock. The codec's MCLK (1.536 MHz, TIMER7 in gd32_i2s.c) is divided from it, so it must be
+ * a multiple of 1.536 MHz, and the USB clock (VCO / Q) must stay close to 48 MHz:
+ *   144: 12.288 / 8 x 188 = 288.768 MHz VCO, /2 = 144.384 MHz (in spec), USB /6 = 48.128 MHz (+0.27 %, the same
+ *        clock tree as the stock bootloader, whose USB disk works on this board), MCLK = /94
+ *   192: 12.288 / 8 x 250 = 384 MHz VCO, /2 = 192 MHz (overclocked, rated 168), USB /8 = 48.000 MHz, MCLK = /125
+ */
+#ifndef APM32_SYSCLK_MHZ
+#define APM32_SYSCLK_MHZ 144
+#endif
+#if APM32_SYSCLK_MHZ == 192
+#define APM32_PLL_N 250U
+#define APM32_PLL_Q 8U
+#define APM32_FLASH_WS 6U
+uint32_t SystemCoreClock = 192000000U;
+#elif APM32_SYSCLK_MHZ == 144
+#define APM32_PLL_N 188U
+#define APM32_PLL_Q 6U
+#define APM32_FLASH_WS 4U
+uint32_t SystemCoreClock = 144384000U;
+#else
+#error "APM32_SYSCLK_MHZ must be 144 or 192"
+#endif
+#else
 uint32_t SystemCoreClock = __SYSTEM_CLOCK_200M_PLL_25M_HXTAL;
+#endif
 static void system_clock_200m_25m_hxtal(void);
 #elif defined (__SYSTEM_CLOCK_240M_PLL_IRC16M)
 uint32_t SystemCoreClock = __SYSTEM_CLOCK_240M_PLL_IRC16M;
@@ -282,7 +308,23 @@ void SystemInit (void)
      * cargador.h -este fichero lo comparten la aplicacion y el cargador, y
      * es anterior a todo-, asi que lo comprueba tools/mapa.py leyendo
      * todos los sitios. */
+#ifdef CHIP_APM32F407
+    SCB->VTOR = 0x08020000;     /* APM32 build: behind the stock bootloader, see APM32F407VG_FLASH.ld */
+    {
+        /* Backup SRAM (4 KB at 0x40024000, section .bkpsram): PWR clock, backup domain write access, BKPSRAM
+         * clock, then zero it like .bss, since the startup code does not touch it. */
+        volatile uint32_t *p;
+        REG32(0x40023840UL) |= (1UL << 28);     /* RCC_APB1ENR.PWREN */
+        REG32(0x40007000UL) |= (1UL << 8);      /* PWR_CR.DBP */
+        REG32(0x40023830UL) |= (1UL << 18);     /* RCC_AHB1ENR.BKPSRAMEN */
+        (void)REG32(0x40023830UL);
+        for (p = (volatile uint32_t *)0x40024000UL; p < (volatile uint32_t *)0x40025000UL; p++) {
+            *p = 0UL;
+        }
+    }
+#else
     SCB->VTOR = 0x08008000;
+#endif
 #endif
 
     /* FPU settings */
@@ -1011,6 +1053,40 @@ static void system_clock_200m_25m_hxtal(void)
 {
     uint32_t timeout = 0U;
     uint32_t stab_flag = 0U;
+#ifdef CHIP_APM32F407
+    /*
+     * APM32F407 (STM32F407-like): no high-drive mode, and the flash needs wait states. HXTAL 12.288 MHz / M=8,
+     * N and Q from APM32_SYSCLK_MHZ above, SYSCLK = VCO / 2; AHB /1, APB2 /2, APB1 /4.
+     */
+    RCU_CTL |= RCU_CTL_HXTALEN;
+    do{
+        timeout++;
+        stab_flag = (RCU_CTL & RCU_CTL_HXTALSTB);
+    }while((0U == stab_flag) && (HXTAL_STARTUP_TIMEOUT != timeout));
+    if(0U == (RCU_CTL & RCU_CTL_HXTALSTB)){
+        while(1){
+        }
+    }
+    RCU_APB1EN |= RCU_APB1EN_PMUEN;
+    PMU_CTL |= PMU_CTL_LDOVS;
+    /* FLASH_ACR: wait states for the chosen clock (2.7-3.6 V: one per 30 MHz), prefetch, I and D caches */
+    REG32(0x40023C00UL) = (1UL << 8) | (1UL << 9) | (1UL << 10) | APM32_FLASH_WS;
+    while ((REG32(0x40023C00UL) & 0xFUL) != APM32_FLASH_WS) {
+    }
+    RCU_CFG0 |= RCU_AHB_CKSYS_DIV1;
+    RCU_CFG0 |= RCU_APB2_CKAHB_DIV2;
+    RCU_CFG0 |= RCU_APB1_CKAHB_DIV4;
+    RCU_PLL = (8U | (APM32_PLL_N << 6U) | (((2U >> 1U) - 1U) << 16U) |
+                   (RCU_PLLSRC_HXTAL) | (APM32_PLL_Q << 24U));
+    RCU_CTL |= RCU_CTL_PLLEN;
+    while(0U == (RCU_CTL & RCU_CTL_PLLSTB)){
+    }
+    RCU_CFG0 &= ~RCU_CFG0_SCS;
+    RCU_CFG0 |= RCU_CKSYSSRC_PLLP;
+    while(0U == (RCU_CFG0 & RCU_SCSS_PLLP)){
+    }
+    return;
+#endif
     
     /* enable HXTAL */
     RCU_CTL |= RCU_CTL_HXTALEN;

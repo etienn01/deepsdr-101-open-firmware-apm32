@@ -69,6 +69,13 @@ _Static_assert(((12288000UL / 8UL) * PLLSAI_N) >= 100000000UL
 
 uint8_t usb_cdc_hw_reloj(void)
 {
+#ifdef CHIP_APM32F407
+    /* APM32F407 (STM32F407-like): no PLLSAI and no 48 MHz clock selector. The USB clock is the main PLL's
+     * Q output, set in system_gd32f4xx.c: 48.000 MHz at 192 MHz SYSCLK (VCO 384 MHz / 8), 48.128 MHz at
+     * 144.384 MHz (VCO 288.768 MHz / 6, +0.27 %). */
+    rcu_periph_clock_enable(RCU_USBFS);
+    return 1U;
+#else
     uint32_t guard = 500000UL;
 
     /* PLLSAIP a 4, PLLSAIN a 125. Los campos Q y R no los usa nadie aqui;
@@ -96,6 +103,7 @@ uint8_t usb_cdc_hw_reloj(void)
     rcu_ck48m_clock_config(RCU_CK48MSRC_PLL48M);
     rcu_periph_clock_enable(RCU_USBFS);
     return 1U;
+#endif
 }
 
 void usb_gpio_config(void)

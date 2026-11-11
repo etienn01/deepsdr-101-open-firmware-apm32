@@ -13,7 +13,12 @@
  * a rounded approximation (same standard this project already holds
  * itself to for TIMER2's MCLK).
  */
+#ifdef CHIP_APM32F407
+/* 20 kHz from the APB1 timer clock (SYSCLK / 2), whatever the APM32 clock is */
+#define BACKLIGHT_PWM_PERIOD ((SystemCoreClock / 2U / 20000U) - 1U)
+#else
 #define BACKLIGHT_PWM_PERIOD 4991U /* ARR; total counts = PERIOD+1 = 4992 */
+#endif
 
 /* Never let the panel go fully black, even if something asks for
  * percent=0 (an encoder run to the floor, a bug elsewhere, etc.) -

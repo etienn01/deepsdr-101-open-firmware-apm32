@@ -217,7 +217,12 @@ void gpio_bit_set(uint32_t gpio_periph, uint32_t pin)
 */
 void gpio_bit_reset(uint32_t gpio_periph, uint32_t pin)
 {
+#ifdef CHIP_APM32F407
+    /* STM32F4-style GPIO: no bit clear (BC) register at 0x28, clear through the upper half of BOP (BSRR) */
+    GPIO_BOP(gpio_periph) = (uint32_t)pin << 16U;
+#else
     GPIO_BC(gpio_periph) = (uint32_t)pin;
+#endif
 }
 
 /*!
@@ -239,7 +244,11 @@ void gpio_bit_write(uint32_t gpio_periph, uint32_t pin, bit_status bit_value)
     if(RESET != bit_value) {
         GPIO_BOP(gpio_periph) = (uint32_t)pin;
     } else {
+#ifdef CHIP_APM32F407
+        GPIO_BOP(gpio_periph) = (uint32_t)pin << 16U;
+#else
         GPIO_BC(gpio_periph) = (uint32_t)pin;
+#endif
     }
 }
 
@@ -416,7 +425,13 @@ void gpio_pin_lock(uint32_t gpio_periph, uint32_t pin)
 */
 void gpio_bit_toggle(uint32_t gpio_periph, uint32_t pin)
 {
+#ifdef CHIP_APM32F407
+    /* no toggle (TG) register at 0x2C either: set the pins that are low, clear those that are high, in one write */
+    uint32_t octl = GPIO_OCTL(gpio_periph);
+    GPIO_BOP(gpio_periph) = (~octl & pin) | ((octl & pin) << 16U);
+#else
     GPIO_TG(gpio_periph) = (uint32_t)pin;
+#endif
 }
 
 /*!
@@ -430,5 +445,10 @@ void gpio_bit_toggle(uint32_t gpio_periph, uint32_t pin)
 */
 void gpio_port_toggle(uint32_t gpio_periph)
 {
+#ifdef CHIP_APM32F407
+    uint32_t octl = GPIO_OCTL(gpio_periph) & 0x0000FFFFU;
+    GPIO_BOP(gpio_periph) = (~octl & 0x0000FFFFU) | (octl << 16U);
+#else
     GPIO_TG(gpio_periph) = 0x0000FFFFU;
+#endif
 }

@@ -63,6 +63,11 @@ void ipa_blit_init(void)
     s_on = 0U; s_vale = 0U; s_lut_cargada = 0U; s_fallos = 0U;
     s_lut_ptr = 0; s_lut_salta = 0U;
 
+#ifdef CHIP_APM32F407
+    /* No IPA (DMA2D) on the APM32F407: its address range is reserved there, so it is never touched and the
+     * waterfall always takes the CPU path. */
+    return;
+#endif
     rcu_periph_clock_enable(RCU_IPA);
     ipa_deinit();
 

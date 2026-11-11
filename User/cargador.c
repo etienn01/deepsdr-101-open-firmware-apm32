@@ -135,7 +135,7 @@ static const uint32_t k_sectores[] = {
     0x08020000UL,   /* S5, 128 kB */
     0x08040000UL,   /* S6, 128 kB */
     0x08060000UL    /* S7, 128 kB */
-#ifdef CHIP_F470VG
+#if defined(CHIP_F470VG) || defined(CHIP_APM32F407)
     ,
     0x08080000UL,   /* S8,  128 kB  - solo en el chip de 1024 kB */
     0x080A0000UL,   /* S9,  128 kB */
@@ -150,8 +150,10 @@ static const uint32_t k_sectores[] = {
  * La ultima entrada de la tabla abre el ultimo sector; el tope es donde
  * acaba. Si alguien mueve uno de los dos y no el otro, esto no compila.
  */
+#ifndef CHIP_APM32F407   /* the APM32 build is updated by the stock bootloader, not by this one */
 _Static_assert(0x08008000UL == CARGA_APP_BASE,
                "la tabla de sectores no empieza donde empieza la aplicacion");
+#endif
 
 /*
  * Y EL TOPE ATADO A LA TABLA, QUE ES LO QUE SE SOLTO.
@@ -162,7 +164,7 @@ _Static_assert(0x08008000UL == CARGA_APP_BASE,
  * el tope y no la tabla, o al reves, esto NO COMPILA, que es exactamente
  * lo que hoy no paso.
  */
-#ifdef CHIP_F470VG
+#if defined(CHIP_F470VG) || defined(CHIP_APM32F407)
 _Static_assert(CARGA_BORRA_HASTA == 0x08100000UL,
                "la tabla llega al S11 (acaba en 0x08100000) y el tope dice otra cosa");
 #else

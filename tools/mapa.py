@@ -25,7 +25,42 @@ FIN_FLASH     = 0x08080000
 
 
 def lee(ruta):
-    return open(ruta, encoding='utf-8', errors='replace').read()
+    return sin_apm32(open(ruta, encoding='utf-8', errors='replace').read())
+
+
+def sin_apm32(t):
+    """
+    The GD32 view of a source file: the CHIP_APM32F407-only branches
+    (#ifdef CHIP_APM32F407 ... #else, and #ifndef CHIP_APM32F407's #else
+    side) are blanked, keeping the line count. This guard checks the GD32
+    memory map; the APM32 build has its own (APM32F407VG_FLASH.ld, with the
+    application at 0x08020000 behind the stock bootloader) and its values
+    would otherwise be read as a mismatch.
+    """
+    salida = []
+    pila = []        # one entry per open #if: [is_apm32_directive, hiding]
+    oculto = 0       # how many enclosing levels are hiding
+    for ln in t.split('\n'):
+        m = re.match(r'\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b\s*(\S*)', ln)
+        esconde = oculto > 0
+        if m:
+            d, arg = m.group(1), m.group(2)
+            if d in ('ifdef', 'ifndef', 'if'):
+                propio = d in ('ifdef', 'ifndef') and arg == 'CHIP_APM32F407'
+                hide = propio and d == 'ifdef'
+                pila.append([propio, hide])
+                oculto += 1 if hide else 0
+                esconde = esconde or propio
+            elif d in ('else', 'elif') and pila and pila[-1][0]:
+                oculto += -1 if pila[-1][1] else 1
+                pila[-1][1] = not pila[-1][1]
+                esconde = True
+            elif d == 'endif' and pila:
+                propio, hide = pila.pop()
+                oculto -= 1 if hide else 0
+                esconde = esconde or propio
+        salida.append('' if esconde else ln)
+    return '\n'.join(salida)
 
 
 def saca(ruta, patron, que):

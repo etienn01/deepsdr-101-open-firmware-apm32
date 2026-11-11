@@ -192,6 +192,12 @@ void adc_disable(uint32_t adc_periph)
 */
 void adc_calibration_enable(uint32_t adc_periph)
 {
+#ifdef CHIP_APM32F407
+    /* STM32F4-style ADC: there is no calibration, and RSTCLB/CLB (CR2 bits 3/2) are reserved, so waiting
+     * for them to clear could hang forever. */
+    (void)adc_periph;
+    return;
+#endif
     /* reset the selected ADC calibration registers */
     ADC_CTL1(adc_periph) |= (uint32_t) ADC_CTL1_RSTCLB;
     /* check the RSTCLB bit state */

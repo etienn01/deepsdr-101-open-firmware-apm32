@@ -169,9 +169,17 @@ void gd32_i2s_init_slave(aic3204_rate_t rate)
      * covers both rates.
      */
     rcu_osci_off(RCU_PLLI2S_CK);
+#ifdef CHIP_APM32F407
+    /* APM32F407: same PSC=8 (1.536 MHz), but its PLLI2S VCO must stay within 100-432 MHz. N=200/R=2 gives
+     * 307.2 MHz / 2 = the same I2S clock as N=400/R=4 on the GD32. */
+    if (rcu_plli2s_config(200U, 2U) != SUCCESS) {
+        debug_print("gd32_i2s: rcu_plli2s_config(200,2) FAILED\n");
+    }
+#else
     if (rcu_plli2s_config(400U, 4U) != SUCCESS) {
         debug_print("gd32_i2s: rcu_plli2s_config(400,4) FAILED\n");
     }
+#endif
     rcu_osci_on(RCU_PLLI2S_CK);
     if (rcu_osci_stab_wait(RCU_PLLI2S_CK) != SUCCESS) {
         debug_print("gd32_i2s: *** PLLI2S DID NOT LOCK (stab_wait ERROR) - no i2sclock ***\n");
@@ -433,7 +441,12 @@ void gd32_i2s_mclk_timer_start(void)
     timer_init_struct.alignedmode       = TIMER_COUNTER_EDGE;
     timer_init_struct.counterdirection  = TIMER_COUNTER_UP;
     timer_init_struct.clockdivision     = TIMER_CKDIV_DIV1;
+#ifdef CHIP_APM32F407
+    /* SYSCLK is a multiple of 1.536 MHz on the APM32 too (see system_gd32f4xx.c): 94 or 125 counts */
+    timer_init_struct.period            = (SystemCoreClock / 1536000U) - 1U;
+#else
     timer_init_struct.period            = 129U; /* 130 counts: 199.68MHz/130 = 1.536MHz exact */
+#endif
     timer_init_struct.repetitioncounter = 0U;
     gd32_timer_init(TIMER7, &timer_init_struct);
 
@@ -442,7 +455,11 @@ void gd32_i2s_mclk_timer_start(void)
     oc_init_struct.ocpolarity   = TIMER_OC_POLARITY_HIGH;
     timer_channel_output_config(TIMER7, TIMER_CH_0, &oc_init_struct);
 
+#ifdef CHIP_APM32F407
+    timer_channel_output_pulse_value_config(TIMER7, TIMER_CH_0, (SystemCoreClock / 1536000U) / 2U);
+#else
     timer_channel_output_pulse_value_config(TIMER7, TIMER_CH_0, 65U); /* exact 50% duty */
+#endif
     timer_channel_output_mode_config(TIMER7, TIMER_CH_0, TIMER_OC_MODE_PWM0);
 
     /* TIMER7 is an advanced-control timer (like TIMER0) - its outputs
