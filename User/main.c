@@ -124,6 +124,9 @@
 static void led_gpio_init(void);
 static void speaker_pa_gpio_init(void);
 static void speaker_pa_set_enabled(uint8_t on);
+#ifdef CHIP_APM32F407
+static void speaker_pa_hold(uint8_t hold);
+#endif
 static void systick_delay_init(void);
 /*
  * EL BUCLE ENTERO, NO SOLO EL DIBUJO - 01/10/2026.
@@ -2813,6 +2816,14 @@ int main(void)
      * has to wait until after the two boot-time calls just above. */
     s_settings_ready_for_autosave = 1U;
 
+#ifdef CHIP_APM32F407
+    {
+        /* let the codec's output settle after its last restart, then give the speaker back */
+        uint32_t t0 = g_msticks;
+        while ((g_msticks - t0) < 150U) { }
+        speaker_pa_hold(0U);
+    }
+#endif
     debug_print("main: entering the main loop\n");
 
     while (1) {
@@ -11324,6 +11335,9 @@ static void apply_demod_mode(demod_mode_t mode)
          */
         iqbal_fir_olvida();
 
+#ifdef CHIP_APM32F407
+        speaker_pa_hold(1U);
+#endif
         /* 1. Stop both DMA channels cleanly before tearing down the
          *    peripherals underneath them. */
         sdr_rx_stop();
@@ -11360,6 +11374,12 @@ static void apply_demod_mode(demod_mode_t mode)
         aic3204_set_rate_power_up();
 #ifdef CHIP_APM32F407
         apm32_rx_resync(rate, block_samples);
+        {
+            /* codec restarted: let its output settle before giving the speaker back */
+            uint32_t t0 = g_msticks;
+            while ((g_msticks - t0) < 30U) { }
+            speaker_pa_hold(0U);
+        }
 #endif
 
         /* Informational only now (see this section's header comment) -
@@ -40448,9 +40468,30 @@ static void led_gpio_init(void)
 #define SPEAKER_PA_PIN          GPIO_PIN_7
 #define SPEAKER_PA_ACTIVE_HIGH  1 /* 1 = pin HIGH enables the PA, 0 = active-LOW - see comment above */
 
+#ifdef CHIP_APM32F407
+/* APM32 build: the speaker amp is held muted while the codec is reset and restarted (boot, rate switches,
+ * I2S re-sync retries), so those restarts no longer pop in the speaker. */
+static uint8_t s_pa_hold;
+static void speaker_pa_hold(uint8_t hold)
+{
+    s_pa_hold = hold ? 1U : 0U;
+    speaker_pa_set_enabled(s_speaker_pa_enabled);
+}
+#endif
 static void speaker_pa_set_enabled(uint8_t on)
 {
     s_speaker_pa_enabled = on ? 1U : 0U;
+#ifdef CHIP_APM32F407
+    if (s_pa_hold) {
+        /* the codec is restarting: remember the choice, keep the amp muted until speaker_pa_hold(0) */
+#if SPEAKER_PA_ACTIVE_HIGH
+        gpio_bit_reset(SPEAKER_PA_GPIO, SPEAKER_PA_PIN);
+#else
+        gpio_bit_set(SPEAKER_PA_GPIO, SPEAKER_PA_PIN);
+#endif
+        return;
+    }
+#endif
 #if SPEAKER_PA_ACTIVE_HIGH
     if (s_speaker_pa_enabled) { gpio_bit_set(SPEAKER_PA_GPIO, SPEAKER_PA_PIN); }
     else                      { gpio_bit_reset(SPEAKER_PA_GPIO, SPEAKER_PA_PIN); }
@@ -40469,6 +40510,9 @@ static void speaker_pa_gpio_init(void)
      * so the GPIO's actual level and the firmware's idea of the
      * speaker state agree from the very first instant it's an output
      * (rather than whatever the pin defaulted to before this ran). */
+#ifdef CHIP_APM32F407
+    s_pa_hold = 1U;   /* muted until the end of the boot, see speaker_pa_hold() */
+#endif
     speaker_pa_set_enabled(s_speaker_pa_enabled);
 }
 

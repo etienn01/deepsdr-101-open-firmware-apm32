@@ -3500,7 +3500,9 @@ void demod_am_init(void)
     rcu_periph_clock_enable(RCU_GPIOB);
     gpio_mode_set(SPK_EN_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, SPK_EN_PIN);
     gpio_output_options_set(SPK_EN_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, SPK_EN_PIN);
+#ifndef CHIP_APM32F407   /* APM32 build: main.c turns the amp on once the codec has settled */
     gpio_bit_set(SPK_EN_PORT, SPK_EN_PIN); /* speaker amp ON */
+#endif
 
     arm_biquad_cascade_df1_init_f32(&s_wfm_ifbw_i_inst, WFM_IFBW_STAGES, WFM_IFBW_NARROW_COEFFS, s_wfm_ifbw_i_state);
     arm_biquad_cascade_df1_init_f32(&s_wfm_ifbw_q_inst, WFM_IFBW_STAGES, WFM_IFBW_NARROW_COEFFS, s_wfm_ifbw_q_state);
