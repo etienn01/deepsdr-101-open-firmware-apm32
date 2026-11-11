@@ -52,7 +52,12 @@ uint16_t battery_vdda_de_raw(uint16_t raw)
 uint16_t battery_mv_de_raw(uint16_t raw, uint16_t vdda_mv, int16_t calib_mv)
 {
     uint32_t adc_mv = ((uint32_t)raw * (uint32_t)vdda_mv) / 4095UL;
+#ifdef CHIP_APM32F407
+    /* APM32F407 (STM32F407-like): the internal VBAT channel divides by 2, not 4 (it read 8.39 V on a full cell) */
+    int32_t  mv = (int32_t)(adc_mv * 2UL) + (int32_t)BATTERY_DIODE_DROP_MV
+#else
     int32_t  mv = (int32_t)(adc_mv * 4UL) + (int32_t)BATTERY_DIODE_DROP_MV
+#endif
                 + (int32_t)calib_mv;
 
     /* El ajuste puede ser negativo y la bateria puede estar a cero: sin

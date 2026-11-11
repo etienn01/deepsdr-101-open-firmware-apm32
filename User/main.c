@@ -18849,6 +18849,20 @@ static const char *info_valor(uint8_t id, char *buf, char *pie)
         uint32_t kb = d >> 16;
         uint8_t  i  = 0U;
 
+#ifdef CHIP_APM32F407
+        /* APM32 build: 0x1FFF7A22 holds the flash size in KB (the lower half of the word is not the SRAM size
+         * there, unlike GD32's density register) */
+        (void)d;
+        {
+            static const char k_n[] = "APM32F407 ";
+            for (i = 0U; k_n[i] != '\0'; i++) { buf[i] = k_n[i]; }
+        }
+        aj_u2s(&buf[i], kb);
+        while (buf[i] != '\0') { i++; }
+        buf[i++] = 'k';
+        buf[i] = '\0';
+        return buf;
+#endif
         buf[i++] = 'G'; buf[i++] = 'D'; buf[i++] = '3'; buf[i++] = '2';
         buf[i++] = 'F'; buf[i++] = '4'; buf[i++] = ' ';
         aj_u2s(&buf[i], kb);
