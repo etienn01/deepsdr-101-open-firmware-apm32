@@ -332,6 +332,12 @@ void cat_init(const cat_radio_t *radio);
  */
 uint8_t cat_byte(char c, char *salida);
 
+#ifdef CHIP_APM32F407
+/* APM32 diagnostics: the "Z..." commands, answered in main.c. Writes the reply to `salida` (CAT_SALIDA_MAX bytes)
+ * and returns its length. */
+uint8_t cat_apm32_extra(const char *orden, uint8_t n, char *salida);
+#endif
+
 /* Para las pruebas y para el reinicio del puerto. */
 void cat_reset(void);
 

@@ -132,6 +132,8 @@ static uint8_t procesa(const char *o, uint8_t n, char *s)
      * by accident. Does not return.
      */
     if (dos(o, 'D', 'F') && (n == 3U) && (o[2] == 'U')) { dfu_pide_reinicio(); }
+    /* "Z..." commands: APM32 diagnostics (S-meter, panadapter), answered in main.c. */
+    if (o[0] == 'Z') { return cat_apm32_extra(o, n, s); }
 #endif
     if (dos(o, 'P', 'S')) {
         /* Encendida. Y encenderla o apagarla desde el ordenador no se

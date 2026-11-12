@@ -40776,3 +40776,94 @@ void HardFault_Handler(void)
         __NOP();
     }
 }
+
+#ifdef CHIP_APM32F407
+/*
+ * The "Z" CAT commands: APM32 diagnostics, so a computer can read what the S-meter and the panadapter see.
+ *   ZS;    -> ZS P F M I X G N ;   P = S-meter peak in dBFS x10, F = spectrum median (waterfall floor + 2 dB) x10,
+ *             M = strongest bin in dB x10 and I its index, X = digital mix offset in Hz, G = AGC profile,
+ *             N = 1 if the NCO is on. Signed fields are a sign and 4 digits (X: 5 digits).
+ *   ZPpp;  -> ZPpp + 32 bins of the current spectrum frame from bin pp x 32, 3 digits each, in dB.
+ */
+static uint8_t z_pon_u(char *s, uint8_t j, uint32_t u, uint8_t cifras)
+{
+    uint8_t k;
+
+    for (k = cifras; k > 0U; k--) {
+        s[j + k - 1U] = (char)('0' + (char)(u % 10UL));
+        u /= 10UL;
+    }
+    return (uint8_t)(j + cifras);
+}
+
+static uint8_t z_pon_s(char *s, uint8_t j, int32_t v, uint8_t cifras)
+{
+    s[j++] = (v < 0) ? '-' : '+';
+    return z_pon_u(s, j, (uint32_t)((v < 0) ? -v : v), cifras);
+}
+
+uint8_t cat_apm32_extra(const char *o, uint8_t n, char *s)
+{
+    uint8_t j = 0U;
+    uint32_t b;
+
+    if ((n == 2U) && (o[1] == 'S')) {
+        float mx = -1000.0f;
+        uint32_t imx = 0U;
+
+        for (b = 0U; b < s_fft_bins; b++) {
+            if (s_db_frame[b] > mx) { mx = s_db_frame[b]; imx = b; }
+        }
+        s[j++] = 'Z';
+        s[j++] = 'S';
+        j = z_pon_s(s, j, (int32_t)(smeter_dbfs_from_peak(demod_am_get_signal_peak()) * 10.0f), 4U);
+        j = z_pon_s(s, j, (int32_t)(spec_agc_mediana() * 10.0f), 4U);
+        j = z_pon_s(s, j, (int32_t)(mx * 10.0f), 4U);
+        j = z_pon_u(s, j, imx, 3U);
+        j = z_pon_s(s, j, (int32_t)demod_am_get_mix_hz(), 5U);
+        j = z_pon_u(s, j, (uint32_t)demod_am_get_agc_profile(), 1U);
+        j = z_pon_u(s, j, (uint32_t)s_nco_on, 1U);
+        s[j++] = ';';
+        return j;
+    }
+    if ((n == 2U) && (o[1] == 'M')) {
+        /* ZM;  -> ZM A B C D ;  10 log10 of: A = channel I/Q power, B = audio power after the filter (sideband and
+         * CW), C = the S-meter's detector, all int16^2 units, x10; D = the S-meter in dBm x10. */
+        float iq, af;
+
+        demod_am_smeter_raw(&iq, &af);
+        s[j++] = 'Z';
+        s[j++] = 'M';
+        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((iq < 1.0f) ? 1.0f : iq)), 4U);
+        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((af < 1.0f) ? 1.0f : af)), 4U);
+        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((demod_am_get_smeter_pow() < 1.0f)
+                                                                  ? 1.0f : demod_am_get_smeter_pow())), 4U);
+        j = z_pon_s(s, j, (int32_t)(smeter_dbm_now() * 10.0f), 4U);
+        s[j++] = ';';
+        return j;
+    }
+    if ((n == 4U) && (o[1] == 'P') && (o[2] >= '0') && (o[2] <= '9') && (o[3] >= '0') && (o[3] <= '9')) {
+        uint32_t b0 = ((uint32_t)(o[2] - '0') * 10UL + (uint32_t)(o[3] - '0')) * 32UL;
+
+        if ((b0 + 32UL) <= s_fft_bins) {
+            s[j++] = 'Z';
+            s[j++] = 'P';
+            s[j++] = o[2];
+            s[j++] = o[3];
+            for (b = 0U; b < 32U; b++) {
+                float v = s_db_frame[b0 + b];
+                int32_t d = (int32_t)(v + 0.5f);
+
+                if (d < 0) { d = 0; }
+                if (d > 999) { d = 999; }
+                j = z_pon_u(s, j, (uint32_t)d, 3U);
+            }
+            s[j++] = ';';
+            return j;
+        }
+    }
+    s[0] = '?';
+    s[1] = ';';
+    return 2U;
+}
+#endif
