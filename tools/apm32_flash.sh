@@ -1,7 +1,9 @@
 #!/bin/sh
 # Update an APM32 radio without opening it: ask the running firmware to reboot into the ROM DFU loader through
-# its USB serial port ("DFU;"), write the image, read it back and compare. Then switch the radio off and on: the
-# ROM loader's own way out ("leave") starts the firmware on hardware it has not reset, and it hangs.
+# its USB serial port ("DFU;"), write the image, read it back and compare, then leave the ROM loader into the
+# firmware. The ROM jumps from inside its USB interrupt; the firmware sees that at its very first instruction
+# (SystemInit) and resets the chip, so the radio restarts on its own. Images older than that check hang instead:
+# switch the radio off and on.
 #
 # Usage: tools/apm32_flash.sh [image.bin]          default image: build_apm32/firmware_apm32.bin
 #        PORT=/dev/cu.usbmodemXXXX tools/apm32_flash.sh   when the serial port cannot be found on its own
@@ -59,4 +61,13 @@ if ! cmp -s "$IMG" "$tmp/readback.bin"; then
     echo "VERIFY FAILED: the flash does not match the image; the radio stays in DFU" >&2
     exit 1
 fi
-echo "image verified: switch the radio off and on"
+
+echo "image verified, restarting the radio"
+dfu-util -d "$DFU_ID" -a 0 -s "$ADDR:leave" >/dev/null 2>&1 || true
+i=0
+until [ -n "$(find_port || true)" ]; do
+    i=$((i + 1))
+    [ $i -le 30 ] || { echo "the radio did not come back on USB within 15 s: switch it off and on" >&2; exit 1; }
+    sleep 0.5
+done
+echo "the radio has restarted"

@@ -148,6 +148,24 @@ static void system_clock_config(void);
 */
 void SystemInit (void)
 {
+    /*
+     * STARTED FROM INSIDE AN INTERRUPT: RESET FIRST - 12/11/2026.
+     *
+     * After an update, the ROM DFU loader's way out ("leave", dfu-util -s 0x08020000:leave) jumps to the firmware from
+     * inside its own USB interrupt handler and never returns from that interrupt. Seen with an ST-Link on the APM32:
+     * the splash screen running with IPSR = 83 (OTG_FS) and OTG_FS active in the NVIC, the audio DMA interrupt pending
+     * and never taken. Every interrupt at that priority or below stays blocked for good, so the firmware hangs with
+     * the screen frozen, and so does the stock bootloader if the loader leaves into it.
+     *
+     * A real reset always starts here in Thread mode, IPSR = 0. Anything else means a loader jumped here from an
+     * exception: a system reset gives the same start as power-on, stock bootloader included. Before anything else,
+     * because nothing below should run in that state, and harmless on a normal start.
+     */
+    if (__get_IPSR() != 0U) {
+        __disable_irq();
+        NVIC_SystemReset();
+    }
+
 #ifdef CARGADOR_ARRANQUE
     /*
      * LA SALIDA DE EMERGENCIA DEL CARGADOR, Y VA LA PRIMERA DE TODO.

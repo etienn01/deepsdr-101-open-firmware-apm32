@@ -85,8 +85,18 @@ command on it. With the radio running and plugged in:
 tools/apm32_flash.sh build_apm32/firmware_apm32.bin
 ```
 
-It sends `DFU;`, writes the image, reads it back and compares. Then switch the radio off and on: started
-directly from the ROM loader, the firmware hangs.
+It sends `DFU;`, writes the image, reads it back, compares, and restarts the radio: the radio comes back on its
+own, USB serial port included.
+
+The ROM loader starts the firmware from inside its USB interrupt, which would leave the firmware's own interrupts
+blocked; the firmware notices at its first instruction and resets the chip once. So a plain `dfu-util` update
+restarts too, with `:leave` on the address:
+
+```
+dfu-util -d 314b:0106 -a 0 -s 0x08020000:leave -D build_apm32/firmware_apm32.bin
+```
+
+Images built before this check hang after `:leave`: switch the radio off and on.
 
 ## Never use update4.bin
 
