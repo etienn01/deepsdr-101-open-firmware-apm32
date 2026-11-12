@@ -7329,7 +7329,9 @@ static float smeter_dbm_now(void)
     float pga_db = (float)((int32_t)s_pga_gain_db_x2 - (int32_t)s_rf_agc_backoff_x2) * 0.5f;
     float dbfs;
 
-    if (pw < 1.0f) { pw = 1.0f; }
+    /* A floor far below anything real, only to keep the log finite. Not 1 LSB^2: at Gain 0 the noise in the
+     * measured width is well under one ADC step, and a floor of 1 stopped the meter at -108.6 dBm. */
+    if (pw < 1.0e-6f) { pw = 1.0e-6f; }
     /* 10 log10(pw / 32767^2), with the log2 approximation used here instead of libm. */
     dbfs = 3.0103f * (smeter_log2_approx(pw) - 2.0f * smeter_log2_approx(32767.0f));
     return dbfs + SMETER_CAL_OFFSET_DB - ((att_db + pga_db) - (SMETER_CAL_ATT_DB + SMETER_CAL_PGA_DB));
@@ -40834,10 +40836,10 @@ uint8_t cat_apm32_extra(const char *o, uint8_t n, char *s)
         demod_am_smeter_raw(&iq, &af);
         s[j++] = 'Z';
         s[j++] = 'M';
-        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((iq < 1.0f) ? 1.0f : iq)), 4U);
-        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((af < 1.0f) ? 1.0f : af)), 4U);
-        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((demod_am_get_smeter_pow() < 1.0f)
-                                                                  ? 1.0f : demod_am_get_smeter_pow())), 4U);
+        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((iq < 1.0e-6f) ? 1.0e-6f : iq)), 4U);
+        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((af < 1.0e-6f) ? 1.0e-6f : af)), 4U);
+        j = z_pon_s(s, j, (int32_t)(30.103f * smeter_log2_approx((demod_am_get_smeter_pow() < 1.0e-6f)
+                                                                  ? 1.0e-6f : demod_am_get_smeter_pow())), 4U);
         j = z_pon_s(s, j, (int32_t)(smeter_dbm_now() * 10.0f), 4U);
         s[j++] = ';';
         return j;
