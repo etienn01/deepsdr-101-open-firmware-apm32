@@ -892,6 +892,14 @@ demod_am_cycles_breakdown_t demod_am_get_last_cycles_breakdown(void);
  * unidades S se hace en el bucle principal, no aqui. Se puede consultar
  * en cualquier momento. */
 float demod_am_get_signal_peak(void);
+
+/* The S-meter's reading: mean power with instant attack and a fixed fall, int16^2 units (a full-scale carrier
+ * is 32767^2). Channel I/Q in AM, SAM and FM; audio after the receive filter in USB, LSB and CW. See
+ * smeter_bloque() in demod_am.c. */
+float demod_am_get_smeter_pow(void);
+/* Its two sources for the last block, for calibration over CAT: channel I/Q power and audio power (0 outside
+ * sideband and CW). */
+void demod_am_smeter_raw(float *iq, float *af);
 /*
  * La bandera de recorte en la entrada de radiofrecuencia. Añadida el
  * 07/08/2026, pedida por el usuario, para el automatico de ganancia de

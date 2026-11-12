@@ -544,7 +544,6 @@ static void time_display_draw(void);
 static void battery_display_draw(void);
 static void badges_draw(void);
 static void smeter_draw(uint8_t segs);
-static uint8_t smeter_segments_from_peak(float peak);
 static void smeter_dbm_update_and_draw(float peak);
 
 /* spec_zoom_t / s_spec_zoom - moved up from their original spot further
@@ -7141,18 +7140,6 @@ static float smeter_dbfs_from_peak(float peak)
     return 6.0206f * (smeter_log2_approx(peak) - smeter_log2_approx(32767.0f));
 }
 
-static uint8_t smeter_segments_from_peak(float peak)
-{
-    float dbfs = smeter_dbfs_from_peak(peak);
-    int32_t segs;
-
-    /* -90dBFS -> 0 segs, 7dB per segment, saturating at 12. */
-    segs = (int32_t)((dbfs + 90.0f) / 7.0f);
-    if (segs < 0)  { segs = 0; }
-    if (segs > SMETER_SEGS) { segs = SMETER_SEGS; }
-    return (uint8_t)segs;
-}
-
 /*
  * smeter_dbfs_uart_report() - added 01/09/2026, per the project owner:
  * they now have a signal generator with a KNOWN, calibrated dBm
@@ -7327,21 +7314,56 @@ static const char *const k_att_siglas[]     = UI_TOP_ATT_SIGLAS;
  * El firmware la mostraba igual; ahora la barra pone "n/d con AGC" en vez
  * de un numero que parece bueno y no lo es (ver el apartado 3.8 del README
  * sobre la calibracion y sus limites). */
+/*
+ * THE S-METER IN dBm AND S-UNITS - 12/11/2026.
+ *
+ * From demod_am_get_smeter_pow() (mean power, own fall time, see smeter_bloque() in demod_am.c) through the
+ * calibration measured with a signal generator (SMETER_CAL_OFFSET_DB above) and the ATT/PGA compensation, so
+ * the reading no longer moves with the gain setting. Then the usual scale: S9 = -73 dBm, 6 dB per S-unit
+ * below, dB over S9 above. Its known gaps are those of the calibration, listed above.
+ */
+static float smeter_dbm_now(void)
+{
+    float pw = demod_am_get_smeter_pow();
+    float att_db = k_att_db_values[s_rf_agc_rin_level];
+    float pga_db = (float)((int32_t)s_pga_gain_db_x2 - (int32_t)s_rf_agc_backoff_x2) * 0.5f;
+    float dbfs;
+
+    if (pw < 1.0f) { pw = 1.0f; }
+    /* 10 log10(pw / 32767^2), with the log2 approximation used here instead of libm. */
+    dbfs = 3.0103f * (smeter_log2_approx(pw) - 2.0f * smeter_log2_approx(32767.0f));
+    return dbfs + SMETER_CAL_OFFSET_DB - ((att_db + pga_db) - (SMETER_CAL_ATT_DB + SMETER_CAL_PGA_DB));
+}
+
+/* The code the top strip and CAT get: 0..9 = S0..S9, 9 + n = S9 + n dB (n = 1..60). */
+static uint8_t smeter_code_from_dbm(float dbm)
+{
+    int32_t v;
+
+    if (dbm >= -72.5f) {
+        v = (int32_t)(dbm + 73.5f);
+        if (v < 1) { v = 1; }
+        if (v > 60) { v = 60; }
+        return (uint8_t)(9 + v);
+    }
+    v = (int32_t)((dbm + 127.0f) / 6.0f + 1000.0f) - 1000;   /* floor, also below zero */
+    if (v < 0) { v = 0; }
+    if (v > 9) { v = 9; }
+    return (uint8_t)v;
+}
+
 static void smeter_dbm_update_and_draw(float peak)
 {
-    float dbfs = smeter_dbfs_from_peak(peak);
-    float current_att_db = k_att_db_values[s_rf_agc_rin_level];
-    float current_pga_db = (float)((int32_t)s_pga_gain_db_x2 - (int32_t)s_rf_agc_backoff_x2) * 0.5f;
-    float current_gain_db = current_att_db + current_pga_db;
-    float cal_gain_db = SMETER_CAL_ATT_DB + SMETER_CAL_PGA_DB;
-    float dbm_f = dbfs + SMETER_CAL_OFFSET_DB - (current_gain_db - cal_gain_db);
+    float dbm_f = smeter_dbm_now();
     int32_t dbm_rounded = (dbm_f >= 0.0f) ? (int32_t)(dbm_f + 0.5f)
                                           : (int32_t)(dbm_f - 0.5f);
 
+    (void)peak;   /* 12/11/2026: the reading comes from the S-meter's own detector, see smeter_dbm_now() */
     if (dbm_rounded > 32767) { dbm_rounded = 32767; }
     if (dbm_rounded < -32768) { dbm_rounded = -32768; }
     s_top_dbm = (int16_t)dbm_rounded;
-    s_top_dbm_valid = (uint8_t)(demod_am_get_agc_profile() == AGC_PROFILE_MANUAL);
+    /* Valid with any AGC profile now: the detector sits before the AGC and has its own fall time. */
+    s_top_dbm_valid = 1U;
 }
 
 /*
@@ -7717,7 +7739,7 @@ static void top_sync(void)
      * por encima, a ~7 dB por segmento (ver smeter_draw()). */
     if (s_top_segs > 9U) {
         s_top.s_units = 10U;
-        s_top.over_db = (uint8_t)((s_top_segs - 9U) * 7U);
+        s_top.over_db = (uint8_t)(s_top_segs - 9U);   /* 12/11/2026: dB over S9, see smeter_code_from_dbm() */
     } else {
         s_top.s_units = s_top_segs;
         s_top.over_db = 0U;
@@ -18153,14 +18175,13 @@ static void cat_modo_pon(uint8_t m)
 static uint8_t cat_smeter_lee(void)
 {
     /*
-     * Los doce segmentos de la pantalla, escalados a los 0..30 de Kenwood.
-     * Se reutiliza smeter_segments_from_peak() a proposito: asi lo que ve
-     * el ordenador y lo que se ve en la pantalla NO pueden discrepar, que
-     * es la clase de diferencia que luego cuesta media tarde.
+     * The same code as the top strip (smeter_code_from_dbm(), 12/11/2026), so what the computer sees and what
+     * the screen shows cannot disagree. Kenwood: 0..15 = S0..S9, 15..30 = S9 + 0..60 dB.
      */
-    uint8_t segs = smeter_segments_from_peak(demod_am_get_signal_peak());
+    uint8_t c = smeter_code_from_dbm(smeter_dbm_now());
 
-    return (uint8_t)(((uint16_t)segs * 30U) / SMETER_SEGS);
+    if (c <= 9U) { return (uint8_t)((c * 15U) / 9U); }
+    return (uint8_t)(15U + ((uint16_t)(c - 9U) * 15U) / 60U);
 }
 
 static uint8_t cat_vol_lee(void)
@@ -39064,7 +39085,7 @@ static void franja_arriba_tick(void)
 
     {
     uint32_t t0 = DWT->CYCCNT;
-    smeter_draw(smeter_segments_from_peak(demod_am_get_signal_peak()));
+    smeter_draw(smeter_code_from_dbm(smeter_dbm_now()));
     smeter_dbfs_uart_report(demod_am_get_signal_peak()); /* see its own comment - S-meter calibration aid */
     /* *** 01/09/2026: replaces the old snr_update_and_draw() - reads
      * demod_am_get_signal_peak() directly, same as the S-meter bar

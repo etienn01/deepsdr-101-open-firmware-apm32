@@ -3065,6 +3065,57 @@ float demod_am_get_signal_peak(void)
 }
 
 /*
+ * THE S-METER'S OWN DETECTOR - 12/11/2026.
+ *
+ * s_sig_peak above is the instantaneous peak of the +-4 kHz channel, with the audio AGC's fall time. As an
+ * S-meter that squeezed everything: a broadcast carrier 37 dB above the noise of one panadapter bin moved it by
+ * about 8 dB, one segment. Three reasons, measured over CAT on the radio:
+ *   - on noise, an instantaneous peak reads some 9 dB above the mean, a carrier only 3;
+ *   - in sideband and CW it counted the whole 8 kHz channel, not the width being heard;
+ *   - its fall followed the AGC profile, so the same station read 7 dB apart between SLOW and FAST.
+ * This one measures MEAN POWER per block: of the channel I/Q in AM, SAM and FM (the carrier, which the audio
+ * chain removes), and of the one sideband in USB, LSB and CW through a copy of the receive filter, before the
+ * noise reduction and the notch. Instant attack, a fixed fall of SMETER_FALL_DB_S whatever the AGC profile. Same units as s_sig_peak
+ * squared: int16 full scale, a full-scale carrier is 32767^2, so the calibration measured on peaks still holds.
+ * s_sig_peak stays as it was for its other readers (RDS, the time-signal receivers).
+ */
+#define SMETER_FALL_DB_S  20.0f
+/* Sideband power -> complex channel power, so that a carrier read in AM (I/Q) and the same carrier as a tone in
+ * USB or LSB give the same number. Measured on the radio over CAT (ZM) with a TinySA at -60 dBm on 14.200 MHz:
+ * channel 53.2 dB in AM, sideband 56.4 dB for tones from 300 Hz to 3 kHz in USB and LSB, so -3.2 dB. */
+#ifndef SMETER_AF_GAIN
+#define SMETER_AF_GAIN    0.48f
+#endif
+static float s_sm_pow;        /* the detector, int16^2 */
+static float s_sm_iq;         /* last block: mean |I+jQ|^2 of the channel */
+static float s_sm_af;         /* last block: mean sideband power, x SMETER_AF_GAIN (0 outside USB/LSB) */
+static float s_sm_caida = 0.98780f;   /* per-block factor for SMETER_FALL_DB_S, set with the rate */
+
+/* The meter's copy of the receive filter, at the 12 kHz sideband rate (see the sideband block). */
+static arm_biquad_casd_df1_inst_f32 s_sm_fil_inst;
+static float s_sm_fil_coef[AUDIOFIL_COEFS];
+static float s_sm_fil_state[AUDIOFIL_ETAPAS * 4U];
+static float s_sm_fil_buf[DEC_BLOCK_SAMPLES_48K];   /* the larger of the two decimated blocks */
+static float s_sm_fil_lo = -1.0f, s_sm_fil_hi = -1.0f;
+
+static void smeter_bloque(float pw)
+{
+    s_sm_pow *= s_sm_caida;
+    if (pw > s_sm_pow) { s_sm_pow = pw; }
+}
+
+float demod_am_get_smeter_pow(void)
+{
+    return s_sm_pow;
+}
+
+void demod_am_smeter_raw(float *iq, float *af)
+{
+    *iq = s_sm_iq;
+    *af = s_sm_af;
+}
+
+/*
  * La deteccion de recorte en la entrada de radiofrecuencia; el por que
  * entero esta en el comentario de su lector en demod_am.h.
  * s_rf_clip_flag solo se PONE desde dentro de una interrupcion
@@ -3752,6 +3803,9 @@ uint8_t demod_am_get_rf_doble(void)
 void demod_am_set_active_rate(uint8_t is_48k)
 {
     s_active_rate_is_48k = is_48k ? 1U : 0U;
+    /* 10^(-fall x block time / 10): 2.667 ms blocks at 96 kHz, 5.333 ms at 48 kHz. */
+    s_sm_caida = powf(10.0f, -SMETER_FALL_DB_S * ((float)SDR_RX_BLOCK_SAMPLES
+                                                  / (s_active_rate_is_48k ? 48000.0f : 96000.0f)) / 10.0f);
     /* El filtro esta diseñado PARA una tasa: con otra, sus cortes caen en
      * otro sitio. Se rehace. */
     fil_construye(demod_am_filtro_familia());
@@ -4749,13 +4803,20 @@ void demod_wfm_process_raw(const int16_t *raw_interleaved)
         float sp2 = s_sig_peak * s_sig_peak;
         float r2  = s_wfm_agc_release * s_wfm_agc_release;
 
+        float sum2 = 0.0f;
+
         for (n = 0; n < SDR_RX_BLOCK_SAMPLES_WFM; n++) {
             float m2 = s_wfm_i_buf[n] * s_wfm_i_buf[n]
                      + s_wfm_q_buf[n] * s_wfm_q_buf[n];
+            sum2 += m2;
             sp2 *= r2;
             if (m2 > sp2) { sp2 = m2; }
         }
         s_sig_peak = sqrtf(sp2);
+        /* The S-meter's detector: 512 samples at 192 kHz are the same 2.667 ms as a 96 kHz block. */
+        s_sm_iq = sum2 / (float)SDR_RX_BLOCK_SAMPLES_WFM;
+        s_sm_af = 0.0f;
+        smeter_bloque(s_sm_iq);
     }
 
     /* 1. Discriminate - delay-and-conjugate-multiply, straight on the
@@ -5772,14 +5833,18 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
          * barrido anda.
          */
         s_sq_sum_mag = 0.0f;
+        float sum2 = 0.0f;
+
         for (n = 0; n < SDR_RX_BLOCK_SAMPLES; n++) {
             float m2 = s_i_buf[n] * s_i_buf[n] + s_q_buf[n] * s_q_buf[n];
             s_env[n] = m2;              /* al CUADRADO todavia: ver abajo */
             if (es_nfm) { s_sq_sum_mag += sqrtf(m2); }
+            sum2 += m2;
             sp2 *= r2;
             if (m2 > sp2) { sp2 = m2; }
         }
         s_sig_peak = sqrtf(sp2);
+        s_sm_iq = sum2 / (float)SDR_RX_BLOCK_SAMPLES;   /* the S-meter's channel power: see smeter_bloque() */
     }
 
     /* 1. Audio extraction - branches by mode. All paths write into
@@ -6231,6 +6296,37 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
         }
 
         fases_combina(s_i_dec, s_q_dec, sign, s_ssb_dec);
+
+        /*
+         * The S-meter's sideband power, HERE: one sideband at 12 kHz, before the noise reduction and the
+         * automatic notch below (measured after them, a steady carrier read 30 dB low with the notch on, and the
+         * reading changed with either switch). Through a copy of the receive filter, the meter's own: the real
+         * one only runs at 96/48 kHz after the noise reduction, and a real radio reads its S-meter in the width
+         * it is listening to. In CW, the CW filter's band around its pitch.
+         */
+        {
+            float lo, hi, sa2 = 0.0f;
+            uint32_t k;
+
+            if (cw_get_enabled()) {
+                lo = s_alpf_cw_hz - 0.5f * s_alpf_cw_bw;
+                hi = s_alpf_cw_hz + 0.5f * s_alpf_cw_bw;
+            } else {
+                uint8_t fam = demod_am_filtro_familia();
+
+                lo = (fam < (uint8_t)FIL_FAM_N) ? (float)s_fil_lo[fam] : 300.0f;
+                hi = (fam < (uint8_t)FIL_FAM_N) ? (float)s_fil_hi[fam] : 3000.0f;
+            }
+            if ((lo != s_sm_fil_lo) || (hi != s_sm_fil_hi)) {
+                audiofil_disena(lo, hi, DEMOD_DEC_FS_HZ, s_sm_fil_coef, 0, 0);
+                arm_biquad_cascade_df1_init_f32(&s_sm_fil_inst, AUDIOFIL_ETAPAS, s_sm_fil_coef, s_sm_fil_state);
+                s_sm_fil_lo = lo;
+                s_sm_fil_hi = hi;
+            }
+            arm_biquad_cascade_df1_f32(&s_sm_fil_inst, s_ssb_dec, s_sm_fil_buf, s_dec_block_samples);
+            for (k = 0U; k < s_dec_block_samples; k++) { sa2 += s_sm_fil_buf[k] * s_sm_fil_buf[k]; }
+            s_sm_af = SMETER_AF_GAIN * sa2 / (float)s_dec_block_samples;
+        }
 
         /*
          * --- RTTY INTEGRATION (added 08/08/2026, first draft) ---
@@ -6870,6 +6966,18 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
      * SOLO SE HACE MIENTRAS EL BARRIDO ANDA: ver s_nivel_on, y el porque,
      * que lo encontro el usuario con una señal de STANAG puesta.
      */
+    /*
+     * The S-meter's block: the sideband power measured right after the phasing in USB, LSB and CW (before the
+     * noise reduction and the notch), the channel power measured before demodulation in AM, SAM and NFM (the DC
+     * blocker has removed the carrier by now).
+     */
+    if ((s_mode == (uint8_t)DEMOD_MODE_USB) || (s_mode == (uint8_t)DEMOD_MODE_LSB)) {
+        smeter_bloque(s_sm_af);
+    } else {
+        s_sm_af = 0.0f;
+        smeter_bloque(s_sm_iq);
+    }
+
     if (s_nivel_on) {
         float sq2 = 0.0f;
 
