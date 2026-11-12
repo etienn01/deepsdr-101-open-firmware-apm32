@@ -108,6 +108,11 @@ static float    s_mu = 0.02f;
 static uint8_t  s_on;
 static float    s_fs = 12000.0f;
 
+/* Regularisation of the adaptation step by the sample being predicted: see anotch_process(). */
+#ifndef ANOTCH_REG
+#define ANOTCH_REG 0.001f
+#endif
+
 static void limpia(void)
 {
     uint16_t i;
@@ -231,35 +236,33 @@ void anotch_process(float *audio, uint32_t n)
 {
     uint32_t k;
     float    pot;
-    uint16_t i0, p0;
 
     if (!s_on || audio == 0) { return; }
 
     /*
-     * LA ENERGIA DE LA VENTANA, UNA VEZ POR BLOQUE Y NO POR MUESTRA.
+     * THE WINDOW ENERGY IS SUMMED EXACTLY, FOR EVERY SAMPLE - 12/11/2026.
      *
-     * El bucle de abajo recorria las 48 tomas DOS veces por muestra: una
-     * para el predictor y otra para sumar v*v. Y la segunda suma siempre
-     * lo mismo menos una muestra: la ventana se desliza de uno en uno, asi
-     * que de una muestra a la siguiente entra un valor y sale otro.
+     * It used to be summed once per block and then slid along: add the sample that enters, subtract the one that
+     * leaves. That is the second method of the comment above s_on, the one that ended in NaN, back in through an
+     * optimisation. Within one block the rounding error is about 1e-7 of the largest energy the window held, and
+     * syllabic audio goes from a loud syllable to a gap 60 to 120 dB quieter in a few samples, the noise reduction's
+     * gaps above all. The error then exceeds the true energy, the clamp at zero leaves 1e-12 as the denominator, the
+     * step is some 10^10 too large and the weights blow up. On the radio, the notch with the noise reduction on cut
+     * the audio for good (NaN in the filters after it) or for tens of seconds (a huge peak, then the AGC's slow
+     * recovery). A host test with 150 ms bursts and 250 ms gaps blew up from gaps 66 dB below the bursts.
      *
-     * Con 48 tomas y 32 muestras por bloque eso son 1.536 multiplicaciones
-     * y sumas por bloque que no hacian falta.
+     * Summed inside the predictor's loop it costs one multiply-add per tap, nothing can drift, and the energy is
+     * exact for every sample.
      *
-     * SE RECALCULA EXACTA EN CADA BLOQUE, y no una sola vez al arrancar.
-     * El "suma uno, resta otro" acumula error de redondeo, y esta energia
-     * no es un adorno: va en el denominador del paso del lazo
-     * (g = mu*e/pot). Un denominador que se va de madre cambia como adapta
-     * el notch. Recalculando por bloque, el error no puede crecer mas alla
-     * de 32 muestras.
+     * AND IT IS REGULARISED BY THE SAMPLE BEING PREDICTED. Exact is not enough: at the onset of a syllable after a
+     * deep gap, the window still holds the gap (it lags by s_retardo samples) while e is already the whole
+     * syllable, so mu*e/pot is huge for those s_retardo samples and the weights grow without bound in the direction
+     * of the gap's noise; when the syllable reaches the window, the prediction is enormous. Same host test, exact
+     * energy alone: peaks 43 to 123 dB above the input. ANOTCH_REG * s_tomas * x^2 in the denominator bounds the step
+     * by the size of what is coming in. 0.001 is the smallest that held: no peak above the input at any strength
+     * and any gap depth, down to digital silence, and a steady carrier is taken down by the same 89 to 101 dB as
+     * before. 0.1 also held but limited a carrier to 58 dB: x^2 follows the carrier's own phase and biases the step.
      */
-    p0 = (uint16_t)(s_cab + LINEA - s_retardo);
-    pot = 0.0f;
-    for (i0 = 0U; i0 < s_tomas; i0++) {
-        float v = s_x[p0 - i0];
-        pot += v * v;
-    }
-
     for (k = 0U; k < n; k++) {
         float x = audio[k];
         float y = 0.0f;
@@ -275,8 +278,11 @@ void anotch_process(float *audio, uint32_t n)
          * recorrido hacia atras de las tomas no se sale por abajo. */
         p = (uint16_t)(s_cab + LINEA - s_retardo);
 
+        pot = 0.0f;
         for (i = 0U; i < s_tomas; i++) {
-            y += s_w[i] * s_x[p - i];
+            float v = s_x[p - i];
+            y += s_w[i] * v;
+            pot += v * v;
         }
 
         e = x - y;
@@ -290,7 +296,7 @@ void anotch_process(float *audio, uint32_t n)
         if (s_arranque != 0U) {
             s_arranque--;
         } else {
-            g = s_mu * e / (pot + 1.0e-12f);
+            g = s_mu * e / (pot + ANOTCH_REG * (float)s_tomas * x * x + 1.0e-12f);
 
             for (i = 0U; i < s_tomas; i++) {
                 s_w[i] += g * s_x[p - i];
@@ -300,18 +306,6 @@ void anotch_process(float *audio, uint32_t n)
         audio[k] = e;
         s_cab++;
         if (s_cab >= (uint16_t)LINEA) { s_cab = 0U; }
-
-        /* Y la ventana de la muestra siguiente: entra una y sale otra. El
-         * indice mas bajo que se toca es s_cab + 1 (ver el comentario de
-         * s_x[]), asi que no se sale por abajo. */
-        {
-            uint16_t pn  = (uint16_t)(s_cab + LINEA - s_retardo);
-            float    ent = s_x[pn];
-            float    sal = s_x[pn - s_tomas];
-
-            pot += ent * ent - sal * sal;
-            if (pot < 0.0f) { pot = 0.0f; }   /* el redondeo, acotado */
-        }
     }
     (void)s_fs;
 }
