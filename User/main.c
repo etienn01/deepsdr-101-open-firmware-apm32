@@ -2753,6 +2753,15 @@ int main(void)
     /* El analizador del CAT, listo. El USB NO se arranca aqui: ver
      * usb_cdc.h para por que va detras de un toque. */
     cat_puente_init();
+#ifdef CHIP_APM32F407
+    /*
+     * APM32 build: the USB serial port starts at power-on, so a computer can send "DFU;" and update the radio
+     * without touching it (tools/apm32_flash.sh). Upstream starts it by hand so that a misbehaving USB core cannot
+     * stop the radio from booting; here the rescue gesture, which runs in SystemInit before any of this, still
+     * reaches the DFU loader. It cannot fail on this chip: the 48 MHz USB clock comes from the main PLL.
+     */
+    (void)usb_cdc_arranca();
+#endif
 
 #if CALIB_HEIGHT_TEST
     calib_height_ruler_draw();

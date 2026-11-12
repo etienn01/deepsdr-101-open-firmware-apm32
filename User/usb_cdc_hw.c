@@ -67,6 +67,10 @@ _Static_assert(((12288000UL / 8UL) * PLLSAI_N) >= 100000000UL
                && ((12288000UL / 8UL) * PLLSAI_N) <= 432000000UL,
                "el VCO del PLLSAI se sale de su rango de 100 a 432 MHz");
 
+#ifdef CHIP_APM32F407
+void usb_gpio_config(void);
+#endif
+
 uint8_t usb_cdc_hw_reloj(void)
 {
 #ifdef CHIP_APM32F407
@@ -74,6 +78,10 @@ uint8_t usb_cdc_hw_reloj(void)
      * Q output, set in system_gd32f4xx.c: 48.000 MHz at 192 MHz SYSCLK (VCO 384 MHz / 8), 48.128 MHz at
      * 144.384 MHz (VCO 288.768 MHz / 6, +0.27 %). */
     rcu_periph_clock_enable(RCU_USBFS);
+    /* And DM/DP must be switched to their alternate function (AF10), which the GD32 does without, as nothing
+     * else in the application calls usb_gpio_config(): without it the computer sees no device at all, although
+     * the core reports itself connected (B-session valid, PHY on, no soft disconnect, and no bus reset ever). */
+    usb_gpio_config();
     return 1U;
 #else
     uint32_t guard = 500000UL;
