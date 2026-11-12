@@ -133,6 +133,30 @@ void dfu_salta(void)
      */
     rcu_deinit();
 
+#if defined(CHIP_APM32F407)
+    /*
+     * AND THE FLASH CACHES EMPTY - 12/11/2026, APM32 only.
+     *
+     * The APM32's flash interface has an instruction and a data cache (FLASH_ACR at 0x40023C00, as on an STM32F4).
+     * Writing the flash does not update them, and the ROM loader never resets them: read in its code, it only
+     * writes FLASH_ACR to switch them on (0x705 or 0x602, never ICRST/DCRST). So after an update the new firmware
+     * started with lines of the OLD one still cached, those this code and the stock bootloader had just run, and
+     * executed a mix of new and old instructions. Seen with an ST-Link: an instruction fetch from 0x0844F1C8,
+     * nowhere, in the first instructions of SystemInit(), then a HardFault in the ROM. It only happened with a
+     * different image (re-flashing the same one left matching lines) and it explains why an update restarted only
+     * one time in three or so.
+     *
+     * Off, reset and left off here; the ROM switches them back on, empty.
+     */
+    {
+        volatile uint32_t *acr = (volatile uint32_t *)0x40023C00UL;
+
+        *acr &= ~((1UL << 9) | (1UL << 10));     /* ICEN, DCEN */
+        *acr |=  (1UL << 11) | (1UL << 12);      /* ICRST, DCRST: only while the caches are off */
+        *acr &= ~((1UL << 11) | (1UL << 12));
+    }
+#endif
+
     /*
      * Todos los perifericos como los deja un reset de verdad... MENOS EL
      * SYSCFG.
