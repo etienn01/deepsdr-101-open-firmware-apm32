@@ -2,6 +2,9 @@
  * El CAT de Kenwood. Ver cat.h para por que es de Kenwood y no nuestro.
  */
 #include "cat.h"
+#ifdef CHIP_APM32F407
+#include "dfu_salto.h"
+#endif
 
 #define ORDEN_MAX  32U
 
@@ -122,6 +125,14 @@ static uint8_t procesa(const char *o, uint8_t n, char *s)
 
     /* --- identificacion y enganche --- */
     if (dos(o, 'I', 'D')) { return (uint8_t)pon(s, 0U, "ID019;"); }
+#ifdef CHIP_APM32F407
+    /*
+     * "DFU;" reboots into the ROM DFU loader, the same path as Information -> DFU mode, so a computer can flash
+     * the radio without anyone touching it (tools/apm32_flash.sh). Not a Kenwood command: no CAT client sends it
+     * by accident. Does not return.
+     */
+    if (dos(o, 'D', 'F') && (n == 3U) && (o[2] == 'U')) { dfu_pide_reinicio(); }
+#endif
     if (dos(o, 'P', 'S')) {
         /* Encendida. Y encenderla o apagarla desde el ordenador no se
          * admite: esta radio no tiene por donde. */
