@@ -61,6 +61,7 @@ typedef struct {
     /* --- eje vertical --- */
     float       db_min;
     float       db_max;
+    float       dbm_ofs;     /* added to every dB value printed: spectrum dB -> dBm (12/11/2026, see main.c) */
 #ifdef CHIP_APM32F407
     float       wf_min;      /* bottom of the waterfall colour legend: the waterfall's own colour floor (APM32 build) */
     float       wf_max;      /* top of the waterfall colour legend (APM32 build) */

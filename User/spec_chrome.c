@@ -116,7 +116,7 @@ static int32_t fila_db(const spec_chrome_t *st, uint8_t gi)
 {
     float db = st->db_max - (st->db_max - st->db_min)
                             * (float)gi / (float)(SPC_GRID_ROWS + 1);
-    return redondea(db);
+    return redondea(db + st->dbm_ofs);
 }
 
 static void draw_db_gutter(gfx2_surf_t *s, void *ctx)
@@ -154,6 +154,10 @@ static void draw_db_gutter(gfx2_surf_t *s, void *ctx)
      * fuera porque poner una unidad que no es la que se mide es peor que no
      * poner ninguna; y de paso ocupaba la esquina de arriba, que es justo
      * donde se mete la traza cuando hay señal fuerte.
+     *
+     * 12/11/2026: the numbers are dBm now, per bin (st->dbm_ofs, see spectrum_dbm_ofs() in main.c): the
+     * S-meter's calibration, checked with a TinySA, applied to the spectrum. Still no unit label, for the same
+     * reason of room.
      */
 
     for (gi = 1U; gi <= SPC_GRID_ROWS; gi++) {
@@ -337,17 +341,17 @@ static void draw_wf_legend(gfx2_surf_t *s, void *ctx)
      * color ya es una forma cerrada y no necesita que nadie la enmarque. */
 
 #ifdef CHIP_APM32F407
-    (void)fmt_dec(buf, redondea(st->wf_max), 0, 0);
+    (void)fmt_dec(buf, redondea(st->wf_max + st->dbm_ofs), 0, 0);
 #else
-    (void)fmt_dec(buf, redondea(st->db_max), 0, 0);
+    (void)fmt_dec(buf, redondea(st->db_max + st->dbm_ofs), 0, 0);
 #endif
     gfx2_text_in(s, 0, (int16_t)(by - 15), (int16_t)(SPC_GUT_W - 2), buf,
                  &font_ui_14, gfx2_rgb(PAL_INK_DIM), GFX2_ALIGN_C);
 
 #ifdef CHIP_APM32F407
-    (void)fmt_dec(buf, redondea(st->wf_min), 0, 0);
+    (void)fmt_dec(buf, redondea(st->wf_min + st->dbm_ofs), 0, 0);
 #else
-    (void)fmt_dec(buf, redondea(st->db_min), 0, 0);
+    (void)fmt_dec(buf, redondea(st->db_min + st->dbm_ofs), 0, 0);
 #endif
     gfx2_text_in(s, 0, (int16_t)(by + bh + 1), (int16_t)(SPC_GUT_W - 2), buf,
                  &font_ui_14, gfx2_rgb(PAL_INK_DIM), GFX2_ALIGN_C);
@@ -524,6 +528,7 @@ uint8_t spec_chrome_axis_changed(const spec_chrome_t *a, const spec_chrome_t *b)
     if (a->cmap != b->cmap) { return 1U; }
     if (redondea(a->db_max) != redondea(b->db_max)) { return 1U; }
     if (redondea(a->db_min) != redondea(b->db_min)) { return 1U; }
+    if (redondea(a->dbm_ofs) != redondea(b->dbm_ofs)) { return 1U; }
 #ifdef CHIP_APM32F407
     if (redondea(a->wf_min) != redondea(b->wf_min)) { return 1U; }
     if (redondea(a->wf_max) != redondea(b->wf_max)) { return 1U; }

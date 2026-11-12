@@ -7335,6 +7335,24 @@ static float smeter_dbm_now(void)
     return dbfs + SMETER_CAL_OFFSET_DB - ((att_db + pga_db) - (SMETER_CAL_ATT_DB + SMETER_CAL_PGA_DB));
 }
 
+/*
+ * SPECTRUM dB -> dBm - 12/11/2026.
+ * fft.c gives 10 log10 |X|^2 of the windowed int16 samples, with no reference: a full-scale complex carrier on a
+ * bin centre reads 20 log10(32767 x N/2) (Hann: coherent gain 1/2). Minus that it is dBFS, then the S-meter's
+ * calibration and gain compensation (smeter_dbm_now()). Checked with a TinySA at -60 dBm on 14.200 MHz: -62.0
+ * on the strongest bin, -61.2 on the S-meter. A carrier reads its dBm (up to 1.4 dB less between two bins);
+ * noise reads dBm per bin (about 1.5 bins of noise bandwidth, so it drops when the bins narrow), some 2.5 dB
+ * low because the frame average is taken in dB. The codec's filter lowers both near the edges.
+ */
+static float spectrum_dbm_ofs(void)
+{
+    float att_db = k_att_db_values[s_rf_agc_rin_level];
+    float pga_db = (float)((int32_t)s_pga_gain_db_x2 - (int32_t)s_rf_agc_backoff_x2) * 0.5f;
+    float ref = 6.0206f * (smeter_log2_approx(32767.0f) + smeter_log2_approx(0.5f * (float)s_fft_bins));
+
+    return -ref + SMETER_CAL_OFFSET_DB - ((att_db + pga_db) - (SMETER_CAL_ATT_DB + SMETER_CAL_PGA_DB));
+}
+
 /* The code the top strip and CAT get: 0..9 = S0..S9, 9 + n = S9 + n dB (n = 1..60). */
 static uint8_t smeter_code_from_dbm(float dbm)
 {
@@ -9089,6 +9107,7 @@ static void chrome_sync(spec_chrome_t *c)
 
     c->db_min    = s_db_min;
     c->db_max    = s_db_max;
+    c->dbm_ofs   = spectrum_dbm_ofs();
 #ifdef CHIP_APM32F407
     c->wf_min    = wf_color_floor(s_db_min);   /* the legend shows the waterfall's own colour scale */
     c->wf_max    = wf_color_top(c->wf_min, s_db_max);

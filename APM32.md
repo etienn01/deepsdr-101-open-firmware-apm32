@@ -99,6 +99,34 @@ Never copy `update4.bin`, or the upstream `update.bin`, to that disk.
 The APM32 has 128 KB of main RAM instead of 192: **FT8, WSPR, HFDL, STANAG and the maps** are left out for now.
 Everything else is the upstream firmware, documented in [README.md](README.md).
 
+## S-meter and spectrum in dBm
+
+The S-meter, the spectrum's scale and the waterfall legend read dBm at the radio's input, with the Gain and
+attenuator settings compensated. This applies to the GD32 build too.
+
+- **S-meter**: mean power in the width being listened to (a copy of the receive filter in USB, LSB and CW; the
+  ±4 kHz channel in AM, SAM and FM), measured before the noise reduction, the notch and the AGC, so none of them
+  changes it. S9 = −73 dBm, 6 dB per S-unit.
+- **Spectrum and waterfall legend**: dBm per FFT bin (about 280 Hz of noise bandwidth at 96 kHz).
+
+The calibration is the one the upstream author measured on his radio with a signal generator. On the tested
+unit, a TinySA at −60 dBm read:
+
+| Frequency (MHz) | 3.6 | 5.5 | 7.1 | 14.2 | 21.2 | 28.5 |
+|---|---|---|---|---|---|---|
+| S-meter (dBm) | −61.5 | −61.5 | −61.4 | −61.2 | −61.4 | −63.3 |
+
+The readings stayed linear within 1 dB from −70 to −30 dBm with Gain at 0. Limits:
+
+- **Each radio differs**: check yours with a generator before trusting the absolute value.
+- **High Gain**: strong signals compress and read low (above about −50 dBm with Gain at 20, upstream measured).
+- **Frequencies**: upstream measured 20 dB of error around 5.5 MHz and 30 dB from 37 to 60 MHz on his radio. The
+  first did not show on the tested unit; the second was not tested.
+- **Anything outside the radio** (an active antenna's amplifier, a bias-T attenuator) is unknown to it: the reading
+  is at the radio's antenna input.
+- **Spectrum**: a carrier between two bins reads up to 1.4 dB low; noise reads about 2.5 dB low (the display
+  averages in dB) and lower near the edges (the codec's filter).
+
 ## Back to the stock firmware
 
 Enter the ROM DFU with BOOT0, then:
