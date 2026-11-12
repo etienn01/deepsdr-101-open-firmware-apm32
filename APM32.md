@@ -76,6 +76,18 @@ Two ways back into the ROM DFU without opening the radio, then the same `dfu-uti
 - **Rescue gesture**, if the firmware no longer starts: switch on while **turning the encoder, without pressing
   it**, for about 3 seconds. The screen stays on "Running APP..." and the computer sees the DFU device.
 
+## Updates from the computer
+
+The USB serial port starts at power-on (the same USB-C cable as for flashing), and the firmware accepts a `DFU;`
+command on it. With the radio running and plugged in:
+
+```
+tools/apm32_flash.sh build_apm32/firmware_apm32.bin
+```
+
+It sends `DFU;`, writes the image, reads it back and compares. Then switch the radio off and on: started
+directly from the ROM loader, the firmware hangs.
+
 ## Never use update4.bin
 
 Holding the encoder pressed at power-on starts the stock bootloader's USB disk mode, which looks for an
