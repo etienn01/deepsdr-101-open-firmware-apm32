@@ -95,6 +95,36 @@
 #define WF_COL_SOURCE(j) \
     ((((uint32_t)(j) * WATERFALL_WIDTH) + WATERFALL_STORE_WIDTH - 1U) / WATERFALL_STORE_WIDTH)
 
+/*
+ * SIX BITS PER STORED COLUMN - 13/11/2026, APM32 build.
+ *
+ * Four values in three bytes, low end first: v0 | v1 << 6 | v2 << 12 | v3 << 18. Six bits are 64 colours over the
+ * 35 dB scale, about 0.55 dB each; compared side by side with 256 colours on a simulated band, there is no visible
+ * difference. Value v is drawn with entry 4v + 2 of the 256-entry palette. 512 columns x 72 rows take 27,648 bytes
+ * instead of 36,864: 9 KB of main RAM back, the same picture. The splash, which borrows this buffer, needs about
+ * 6 KB of it.
+ */
+#ifndef WATERFALL_PACK6
+#ifdef CHIP_APM32F407
+#define WATERFALL_PACK6 1
+#else
+#define WATERFALL_PACK6 0
+#endif
+#endif
+#if WATERFALL_PACK6
+#if (WATERFALL_STORE_WIDTH % 4U) != 0U
+#error "WATERFALL_PACK6 needs a multiple of four stored columns"
+#endif
+#define WATERFALL_ROW_BYTES ((WATERFALL_STORE_WIDTH / 4U) * 3U)
+/* Stored value of column j in a packed row. */
+#define WF_P6(row, j) \
+    ((uint8_t)((((uint32_t)(row)[3U * ((j) >> 2)]                         \
+                | ((uint32_t)(row)[3U * ((j) >> 2) + 1U] << 8)             \
+                | ((uint32_t)(row)[3U * ((j) >> 2) + 2U] << 16)) >> (6U * ((j) & 3U))) & 63U))
+#else
+#define WATERFALL_ROW_BYTES WATERFALL_STORE_WIDTH
+#endif
+
 
 /* Reserva el buffer (en .bss, RAM principal) y lo pone a negro. Llamar
  * una vez al arrancar, antes del primer waterfall_push_line(). */

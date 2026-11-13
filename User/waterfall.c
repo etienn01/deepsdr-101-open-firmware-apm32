@@ -137,7 +137,26 @@ void waterfall_push_line(const uint8_t *line)
     }
 #endif
     s_head = (uint16_t)((s_head + WATERFALL_STORE_ROWS - 1U) % WATERFALL_STORE_ROWS);
-#if WATERFALL_STORE_WIDTH == WATERFALL_WIDTH
+#if WATERFALL_PACK6
+#if WATERFALL_VSCALE > 1
+#error "WATERFALL_PACK6 does not average rows (WATERFALL_VSCALE > 1)"
+#endif
+    {
+        uint8_t *row = &s_buf[s_head][0];
+        uint16_t j;
+
+        for (j = 0U; j < WATERFALL_STORE_WIDTH; j += 4U) {
+            uint32_t v = ((uint32_t)line[WF_COL_SOURCE(j)] >> 2)
+                       | (((uint32_t)line[WF_COL_SOURCE(j + 1U)] >> 2) << 6)
+                       | (((uint32_t)line[WF_COL_SOURCE(j + 2U)] >> 2) << 12)
+                       | (((uint32_t)line[WF_COL_SOURCE(j + 3U)] >> 2) << 18);
+
+            *row++ = (uint8_t)v;
+            *row++ = (uint8_t)(v >> 8);
+            *row++ = (uint8_t)(v >> 16);
+        }
+    }
+#elif WATERFALL_STORE_WIDTH == WATERFALL_WIDTH
     memcpy(&s_buf[s_head][0], line, WATERFALL_WIDTH);
 #else
     {
@@ -149,6 +168,7 @@ void waterfall_push_line(const uint8_t *line)
     if (s_pend < (uint8_t)WATERFALL_STORE_ROWS) { s_pend++; }
 }
 
+#if !WATERFALL_PACK6
 /* ---------------------------------------------------------------------
  * EL VOLCADO POR IPA. 24/09/2026.
  * ---------------------------------------------------------------------
@@ -230,6 +250,8 @@ static uint8_t wf_blit_ipa(uint16_t x, uint16_t y, const uint16_t *lut)
     return 1U;
 }
 
+#endif
+
 /*
  * LA CASCADA DENTRO DE UNA BANDA QUE TRAE OTRO - 05/10/2026.
  *
@@ -267,7 +289,13 @@ void waterfall_pinta_en(gfx2_surf_t *sf, int16_t px, int16_t py,
         if (dy < 0 || dy >= sf->h) { continue; }
         dst = &sf->px[(int32_t)dy * sf->w + dx];
         for (c = 0U; c < (uint16_t)WATERFALL_WIDTH; c++) {
+#if WATERFALL_PACK6
+            uint32_t j = ((uint32_t)c * WATERFALL_STORE_WIDTH) / WATERFALL_WIDTH;
+
+            dst[c] = lut[((uint32_t)WF_P6(src, j) << 2) | 2U];
+#else
             dst[c] = lut[src[((uint32_t)c * WATERFALL_STORE_WIDTH) / WATERFALL_WIDTH]];
+#endif
         }
     }
 }
@@ -385,13 +413,15 @@ void waterfall_blit(uint16_t x, uint16_t y, const uint16_t *lut)
      * primero y, si no puede, se cae al de siempre - que no es un apano:
      * es el que hay que poder comparar contra el otro sin recompilar. */
     /* the IPA path neither scales rows nor widens stored ones */
+#if !WATERFALL_PACK6
     if ((WATERFALL_VSCALE == 1) && (WATERFALL_STORE_WIDTH == WATERFALL_WIDTH) && ipa_blit_hay()) {
         if (wf_blit_ipa(x, y, lut)) {
             return;
         }
     }
+#endif
     gfx2_wf_blit((int16_t)x, (int16_t)y, WATERFALL_WIDTH, WATERFALL_ROWS,
-                 &s_buf[0][0], WATERFALL_STORE_WIDTH, WATERFALL_STORE_WIDTH, (int16_t)s_head, lut);
+                 &s_buf[0][0], WATERFALL_ROW_BYTES, WATERFALL_STORE_WIDTH, (int16_t)s_head, lut);
 }
 
 uint8_t *waterfall_row(uint16_t row)

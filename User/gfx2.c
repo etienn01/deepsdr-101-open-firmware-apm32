@@ -1267,7 +1267,7 @@ void gfx2_text_in(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w,
  * stepped exactly without a division per pixel. */
 #ifdef CHIP_APM32F407
 /* wf_ensancha(), but straight to the panel: one row converted and written in the same pass, no band buffer. */
-static void wf_envia(int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *cmap)
+__attribute__((unused)) static void wf_envia(int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *cmap)
 {
     int16_t i;
     int32_t acc = 0;
@@ -1277,6 +1277,33 @@ static void wf_envia(int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t
         rm68120_dato(cmap[*p]);
         acc += src_w;
         if (acc >= w) { acc -= w; p++; }
+    }
+}
+#endif
+
+#if WATERFALL_PACK6
+/* Six-bit rows (see WATERFALL_PACK6 in waterfall.h): the 64 colours, entry 4v + 2 of the 256-entry palette. */
+static void wf_c64(const uint16_t *cmap, uint16_t *c64)
+{
+    uint16_t v;
+
+    for (v = 0U; v < 64U; v++) { c64[v] = cmap[(v << 2) | 2U]; }
+}
+
+/* wf_ensancha() / wf_envia() for a packed row: the same stepping (pixel i takes column i * src_w / w), into dp,
+ * or with dp = 0 straight to the panel. */
+static void wf_ensancha6(uint16_t *dp, int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *c64)
+{
+    int16_t  i;
+    int32_t  acc = 0;
+    uint32_t j = 0U;
+
+    for (i = 0; i < w; i++) {
+        uint16_t c = c64[WF_P6(sp, j)];
+
+        if (dp != 0) { dp[i] = c; } else { rm68120_dato(c); }
+        acc += src_w;
+        if (acc >= w) { acc -= w; j++; }
     }
 }
 #endif
@@ -1307,7 +1334,16 @@ void gfx2_wf_fila(int16_t x, int16_t y, int16_t w,
     if (gfx2_banda_coge() == (uint16_t *)0) {
         return;
     }
+#if WATERFALL_PACK6
+    {
+        uint16_t c64[64];
+
+        wf_c64(cmap, c64);
+        wf_ensancha6(s_band, w, idx, src_w, c64);
+    }
+#else
     wf_ensancha(s_band, w, idx, src_w, cmap);
+#endif
 
     if (s_chivato) {
         s_chivato((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)y);
@@ -1366,7 +1402,14 @@ void gfx2_wf_blit(int16_t x, int16_t y, int16_t w, int16_t rows,
         rm68120_set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + rows - 1));
         for (r = 0; r < rows; r++) {
             int16_t src = (int16_t)((head + r / WATERFALL_VSCALE) % (rows / WATERFALL_VSCALE));
+#if WATERFALL_PACK6
+            static uint16_t c64[64];
+
+            if (r == 0) { wf_c64(cmap, c64); }
+            wf_ensancha6(0, w, &idx[(int32_t)src * stride], src_w, c64);
+#else
             wf_envia(w, &idx[(int32_t)src * stride], src_w, cmap);
+#endif
         }
         gfx2_banda_suelta();
         return;
