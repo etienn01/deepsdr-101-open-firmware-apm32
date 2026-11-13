@@ -7082,17 +7082,20 @@ static void smeter_draw(uint8_t segs)
      * y lo segundo solo cuando el aviso cambia de verdad.
      */
     static uint8_t s_ovr_pintado = 0xFFU;
+    /* 13/11/2026: the bar follows the dBm reading, not the segment, so a 1 dB move redraws it too. */
+    static int16_t s_dbm_pintado = INT16_MIN;
     uint8_t ovr_ahora = (uint8_t)(rf_entrada_saturada()
                                   || (s_rf_agc_enabled
                                       && (s_rf_agc_backoff_x2 > 0)));
     uint8_t ovr_cambia;
 
-    if (segs == s_smeter_segs_last && ovr_ahora == s_ovr_pintado) {
+    if (segs == s_smeter_segs_last && ovr_ahora == s_ovr_pintado && s_top_dbm == s_dbm_pintado) {
         return;
     }
     ovr_cambia = (uint8_t)(ovr_ahora != s_ovr_pintado);
     s_ovr_pintado = ovr_ahora;
     s_smeter_segs_last = segs;
+    s_dbm_pintado = s_top_dbm;
     s_top_segs = segs;
     top_sync();
     if (ovr_cambia) {
@@ -39106,13 +39109,14 @@ static void franja_arriba_tick(void)
 
     {
     uint32_t t0 = DWT->CYCCNT;
-    smeter_draw(smeter_code_from_dbm(smeter_dbm_now()));
-    smeter_dbfs_uart_report(demod_am_get_signal_peak()); /* see its own comment - S-meter calibration aid */
     /* *** 01/09/2026: replaces the old snr_update_and_draw() - reads
      * demod_am_get_signal_peak() directly, same as the S-meter bar
-     * right above it, so it stays live exactly like the S-meter
-     * does. See smeter_dbm_update_and_draw()'s own comment. */
+     * right below it, so it stays live exactly like the S-meter
+     * does. See smeter_dbm_update_and_draw()'s own comment.
+     * 13/11/2026: BEFORE smeter_draw() now, which draws the bar from this frame's dBm. */
     smeter_dbm_update_and_draw(demod_am_get_signal_peak());
+    smeter_draw(smeter_code_from_dbm(smeter_dbm_now()));
+    smeter_dbfs_uart_report(demod_am_get_signal_peak()); /* see its own comment - S-meter calibration aid */
     sam_calib_display_draw(); /* MS5351 PPM calibration readout, 21/08/2026 - see its own comment; needs to update live as the PLL converges, same cadence as the S-meter above */
     /* Ver TRAMO_SMT: los tres de arriba van juntos porque los tres pintan
      * su hueco de la cabecera y los tres corren en cada fotograma. */

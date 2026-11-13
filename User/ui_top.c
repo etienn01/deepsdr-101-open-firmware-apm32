@@ -704,7 +704,18 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
         /* S1..S9 ocupan el 62% de la barra y el resto es S9+, que es la
          * escala real de un S-meter: 6 dB por unidad hasta S9, dB sueltos
          * por encima. */
-        if (st->s_units > 9u) {
+        /* 13/11/2026: from the dBm reading when there is one, so the bar moves smoothly (about 1.4 px per dB
+         * below S9) instead of jumping a whole S-unit, 6 dB, at a time. Same scale: S0 = -127 dBm at the left
+         * end, S9 = -73 dBm at 62 %, S9+60 at the right end. The label next to it stays in whole S-units. */
+        if (st->dbm_valid) {
+            int32_t d = st->dbm;
+            if (d >= -73) {
+                d = (d + 73 > 60) ? 60 : d + 73;
+                t1000 = 620u + (uint32_t)d * 380u / 60u;
+            } else {
+                t1000 = (d <= -127) ? 0u : (uint32_t)(d + 127) * 620u / 54u;
+            }
+        } else if (st->s_units > 9u) {
             uint32_t o = st->over_db > 60u ? 60u : st->over_db;
             t1000 = 620u + o * 380u / 60u;
         } else {
