@@ -18318,6 +18318,16 @@ static uint16_t cat_ancho_lee(void)
     }
 }
 
+/* The audio interrupt's cycles in the last block, from the counter of the
+ * path that is running: in WFM demod_am_process_raw() is not called and its
+ * counter keeps whatever it measured before. See the 06/11/2026 comment in
+ * cat_audio_lee(). */
+static uint32_t carga_ciclos_usados(void)
+{
+    return (demod_am_get_mode() == DEMOD_MODE_WFM) ? demod_wfm_get_last_cycles()
+                                                   : demod_am_get_last_cycles();
+}
+
 /*
  * Lo que contesta "DG;": la media de cada tramo desde la consulta
  * anterior, y los contadores a cero para la siguiente. Ver s_diag_suma.
@@ -18349,7 +18359,7 @@ static void cat_diag_lee(cat_diag_t *d)
     d->nr = nr_ss_get_enabled();
     tope = carga_tope_ciclos();
     d->carga = (tope != 0UL)
-               ? (uint8_t)((demod_am_get_last_cycles() * 100UL) / tope)
+               ? (uint8_t)((carga_ciclos_usados() * 100UL) / tope)
                : 0U;
     if (d->carga > 100U) { d->carga = 100U; }
 }
@@ -18495,9 +18505,7 @@ static void cat_audio_lee(cat_audio_t *a)
      */
     tope = carga_tope_ciclos();
     {
-        uint32_t usados = (demod_am_get_mode() == DEMOD_MODE_WFM)
-                          ? demod_wfm_get_last_cycles()
-                          : demod_am_get_last_cycles();
+        uint32_t usados = carga_ciclos_usados();
         a->carga = (tope != 0UL) ? ((usados * 100UL) / tope) : 0UL;
     }
     if (a->carga > 100UL) { a->carga = 100UL; }
@@ -19766,8 +19774,7 @@ static const char *info_valor(uint8_t id, char *buf, char *pie)
          */
         uint8_t es_wfm = (uint8_t)(demod_am_get_mode() == DEMOD_MODE_WFM);
         uint32_t tope = carga_tope_ciclos();
-        uint32_t usados = es_wfm ? demod_wfm_get_last_cycles()
-                                 : demod_am_get_last_cycles();
+        uint32_t usados = carga_ciclos_usados();
         /* Y el segundo numero del renglon, el del reductor de ruido, era
          * la otra mitad del mismo fallo: FM ancha no tiene reductor de
          * ruido y no escribe ese desglose, asi que salia el de la ultima
