@@ -1794,6 +1794,26 @@ static uint8_t  s_wfm_hubo_audio;
  * esta probado en marcha, solo comprobado estaticamente. Es la deuda que
  * deja este cambio.
  */
+/*
+ * IN THE TCM - 14/11/2026.
+ *
+ * The union (8,192 bytes) lives in the core-coupled RAM at 0x10000000, not
+ * in main SRAM: main SRAM is the only RAM the DMA controllers can reach, so
+ * it is the one worth keeping free. Only the CPU ever touches these bytes.
+ * They are filled from the raw block (read by the CPU out of s_raw_buf),
+ * worked on by the two block functions and the decoders they call, and the
+ * audio leaves by copy: gd32_i2s_stream_write_half() memcpy()s it into the
+ * DMA's own s_stream_buf and usb_cdc_audio() copies it into the USB ring.
+ * No DMA channel, the IPA or the USB core is ever given an address in here.
+ * The startup code zeroes .tcmram like .bss, and every member is written
+ * before it is read in each block anyway.
+ *
+ * aligned(8) is the alignment GCC gives the union on its own in .bss (it
+ * raises large objects to 8 bytes) but not in a named section. Without it
+ * the two block functions compile to different code, 48 bytes longer;
+ * with it the code is the same, byte for byte.
+ */
+#define TCMRAM_BSS __attribute__((section(".tcmram")))
 static union {
     struct {
         float32_t i_buf[SDR_RX_BLOCK_SAMPLES_WFM];
@@ -1855,7 +1875,7 @@ static union {
         float32_t q_hilbert_out[DEC_BLOCK_SAMPLES_MAX]; /* Hilbert(Q), 90deg-shifted, @ 12kHz */
         float32_t ssb_dec[DEC_BLOCK_SAMPLES_MAX];       /* combined SSB audio @ 12kHz */
     } est;                      /* estrecho: AM, SSB, NFM */
-} s_via;
+} s_via TCMRAM_BSS __attribute__((aligned(8)));
 
 #define s_wfm_i_buf      (s_via.wfm.i_buf)
 #define s_wfm_q_buf      (s_via.wfm.q_buf)
@@ -2277,8 +2297,7 @@ static arm_fir_interpolate_instance_f32 s_interp_inst;
  * que son llamadas normales de CPU desde el codigo de esta misma
  * interrupcion. El por que entero esta en el comentario mas largo
  * sobre el TCM de fft.c: hacia falta soltar RAM principal para
- * ensanchar el panel de la cascada. */
-#define TCMRAM_BSS __attribute__((section(".tcmram")))
+ * ensanchar el panel de la cascada. TCMRAM_BSS is defined above s_via. */
 static float32_t s_decim_i_state[DECIM_STATE_SIZE_MAX] TCMRAM_BSS;
 static float32_t s_decim_q_state[DECIM_STATE_SIZE_MAX] TCMRAM_BSS;
 static float32_t s_hilbert_state[HILBERT_STATE_SIZE_MAX] TCMRAM_BSS;
