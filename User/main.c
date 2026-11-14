@@ -38539,7 +38539,8 @@ fin:
  * ha quedado holgado al quitarle a rtty_scope.c su FFT duplicada, asi que
  * los dos que mas se leen por cuadro se mudan ahi. Ni son destino de DMA ni
  * los toca ninguna interrupcion. */
-static float   s_db[FFT_BINS_IQ] TCMRAM_BSS; /* fftshifted: VFO at the center index */
+/* s_db, the 2 kB result of each FFT before it was added to the frame's sum, is gone: the FFT adds into s_db_sum
+ * itself (fft_compute_db_iq_suma()). */
 
 /*
  * UPDATED (28/07/2026): aic3204.c now runs the full real captured
@@ -39649,19 +39650,12 @@ static void sdr_spectrum_waterfall_tick(void)
              * the display (fftshift order, see fft.h). This is what makes
              * the panadapter read like one: a signal tuned exactly on the
              * VFO sits on the center line, not at the left edge. */
-            fft_compute_db_iq(s_rx_i, s_rx_q, s_db);
+            /* Straight into the frame's sum: the first FFT of the frame
+             * stores, the next ones add (no 2 kB array for each result). */
+            fft_compute_db_iq_suma(s_rx_i, s_rx_q, s_db_sum, 1U,
+                                   (uint8_t)(s_db_count != 0U));
             t_fft1 = DWT->CYCCNT;
             fft_us = (uint32_t)(((uint64_t)(t_fft1 - t_fft0)) * 1000000U / SystemCoreClock);
-
-            if (s_db_count == 0U) {
-                for (bi = 0; bi < s_fft_bins; bi++) {
-                    s_db_sum[bi] = s_db[bi];
-                }
-            } else {
-                for (bi = 0; bi < s_fft_bins; bi++) {
-                    s_db_sum[bi] += s_db[bi];
-                }
-            }
             s_db_count++;
 
             /* The half-frame snapshot. Its moment is marked at every speed
@@ -39725,13 +39719,9 @@ static void sdr_spectrum_waterfall_tick(void)
             /* crudo = 0: esta ventana va remezclada al dial y diezmada,
              * asi que el gancho del corrector de espejo NO puede mirarla.
              * Ver fft_compute_db_iq_ex() en fft.h. */
-            fft_compute_db_iq_ex(s_zoom_acc_i, s_zoom_acc_q, s_db, 0U);
+            fft_compute_db_iq_ex(s_zoom_acc_i, s_zoom_acc_q, s_db_sum, 0U);
             t_fft1 = DWT->CYCCNT;
             fft_us = (uint32_t)(((uint64_t)(t_fft1 - t_fft0)) * 1000000U / SystemCoreClock);
-
-            for (bi = 0; bi < s_fft_bins; bi++) {
-                s_db_sum[bi] = s_db[bi];
-            }
             s_db_count = 1U;
         }
     }

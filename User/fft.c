@@ -380,6 +380,12 @@ void fft_compute_db_iq(const int16_t *i_samples, const int16_t *q_samples,
 void fft_compute_db_iq_ex(const int16_t *i_samples, const int16_t *q_samples,
                           float *db_out, uint8_t crudo)
 {
+    fft_compute_db_iq_suma(i_samples, q_samples, db_out, crudo, 0U);
+}
+
+void fft_compute_db_iq_suma(const int16_t *i_samples, const int16_t *q_samples,
+                            float *db_out, uint8_t crudo, uint8_t suma)
+{
     uint32_t n;
     uint32_t tam  = s_iq_n;
     uint32_t desp = s_iq_desp;
@@ -427,7 +433,8 @@ void fft_compute_db_iq_ex(const int16_t *i_samples, const int16_t *q_samples,
     for (n = 0; n < tam; n++) {
         uint32_t out = (n + tam / 2U) & (tam - 1U);
         float power = s_re[n] * s_re[n] + s_im[n] * s_im[n];
-        db_out[out] = 3.0103f * log2_approx(power);
+        float db = 3.0103f * log2_approx(power);
+        db_out[out] = (suma != 0U) ? (db_out[out] + db) : db;
     }
 
 #if FFT_IQ_DC_BLANK

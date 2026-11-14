@@ -207,14 +207,14 @@ def main():
 
             run = bucles(instrucciones(solo_funcion(dump, "fft_run")))
             iq = bucles(instrucciones(
-                solo_funcion(dump, "fft_compute_db_iq_ex")))
+                solo_funcion(dump, "fft_compute_db_iq_suma")))
             if not run or not iq:
                 print("  no encuentro los bucles   MAL")
                 return 1
 
             mar = elige(run, True)      # la mariposa: lleva el giro
             et0 = elige(run, False)     # la etapa 0: sin giro
-            # En fft_compute_db_iq_ex() hay dos pasadas de N: la de cargar
+            # En fft_compute_db_iq_suma() hay dos pasadas de N: la de cargar
             # con ventana de Hann y la de pasar a dB. La de dB lleva la
             # aproximacion de log2, que multiplica; la de carga tambien
             # -la ventana-, asi que se cogen los dos mas cortos distintos.

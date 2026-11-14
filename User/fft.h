@@ -188,4 +188,13 @@ void fft_compute_db_iq(const int16_t *i_samples, const int16_t *q_samples,
 void fft_compute_db_iq_ex(const int16_t *i_samples, const int16_t *q_samples,
                           float *db_out, uint8_t crudo);
 
+/*
+ * The same, ADDING each bin's dB to db_out when `suma` is not 0 instead of storing it: the panadapter sums the
+ * frame's FFTs this way without a 2 kB array for each one's result. The DC blank then fills the centre from the
+ * summed neighbours, which is the sum of each FFT's fill up to rounding. fft_compute_db_iq_ex() is this with
+ * suma = 0.
+ */
+void fft_compute_db_iq_suma(const int16_t *i_samples, const int16_t *q_samples,
+                            float *db_out, uint8_t crudo, uint8_t suma);
+
 #endif /* FFT_H */
