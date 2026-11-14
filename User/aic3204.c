@@ -988,6 +988,24 @@ void aic3204_set_rate_power_up(void)
  * headroom on top of the analog stage still isn't enough, that's the
  * next place to look.
  */
+/*
+ * SOFT MUTE BEFORE A RESET - 14/11/2026.
+ *
+ * The DAC volume normally changes with soft-stepping DISABLED (R63 D1:D0 = 10, as captured), so muting it outright
+ * would itself be a step. Here soft-stepping is turned on (D1:D0 = 00, one 0.5 dB step per word clock; DAC power
+ * and data routing as captured) and both DAC channels are muted (R64 D3:D2): the output ramps down to mute in 127
+ * steps, 2.6 ms at 48 kHz. Used before a rate switch cuts the speaker amp and resets the codec (see main.c,
+ * "SILENCE, THEN THE AMP, THEN THE CODEC"); the reset restores every register.
+ */
+uint8_t aic3204_soft_mute(void)
+{
+    uint8_t ok;
+
+    ok  = aic3204_write_reg(0, 0x3F, 0xD4);
+    ok &= aic3204_write_reg(0, 0x40, 0x0C);
+    return ok;
+}
+
 uint8_t aic3204_set_volume_db(float db)
 {
     int32_t reg_val;

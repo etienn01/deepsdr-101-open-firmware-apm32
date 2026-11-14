@@ -1974,6 +1974,12 @@ static uint8_t     s_mapa_puesta;   /* 0 = aun no se ha colocado */
 
 #ifdef CHIP_APM32F407
 static void apm32_rx_resync(aic3204_rate_t rate, uint32_t block_samples);
+#ifdef CHIP_APM32F407
+/* Rate switch: time for the speaker amp to go quiet after it is cut, and for the codec to settle after its restart
+ * before the amp comes back. Measured by ear on the radio, see "SILENCE, THEN THE AMP, THEN THE CODEC". */
+#define SPK_APAGADO_MS 300U
+#define SPK_ASIENTO_MS 150U
+#endif
 #endif
 int main(void)
 {
@@ -11403,6 +11409,31 @@ static void apply_demod_mode(demod_mode_t mode)
                                      ? SDR_RX_BLOCK_SAMPLES_WFM
                                      : SDR_RX_BLOCK_SAMPLES;
 
+#ifdef CHIP_APM32F407
+        /*
+         * SILENCE, THEN THE AMP, THEN THE CODEC - 14/11/2026.
+         *
+         * The speaker cracked on every rate switch (not with the speaker off). Tried on the radio with the user,
+         * one change at a time:
+         *   - amp held off 3 s after the restart: the crack still came at the touch, so from the start;
+         *   - DAC soft-muted first, then the amp cut 20 ms before the reset: still there;
+         *   - amp left on throughout: still there, a little different, sometimes twice (each codec reset);
+         *   - soft mute, amp cut, 300 ms before the reset: gone, but for a faint tick;
+         *   - and the amp back on 150 ms after the restart instead of 30: nothing at all.
+         * So this amp takes far longer than 20 ms to go quiet after its enable pin drops, and a codec reset
+         * before that comes through; it also wants the codec settled longer before it comes back on. The DAC is
+         * ramped to mute first (aic3204_soft_mute()) so the amp is never cut with sound playing.
+         */
+        (void)aic3204_soft_mute();
+        {
+            uint32_t t0 = g_msticks;
+
+            while ((g_msticks - t0) < 5U) { }                      /* the ramp: 2.6 ms at 48 kHz */
+            speaker_pa_hold(1U);
+            t0 = g_msticks;
+            while ((g_msticks - t0) < SPK_APAGADO_MS) { }          /* the amp going quiet */
+        }
+#endif
         /* Only the CLEAN result of this bring-up should ever reach the
          * real demodulator - keep the block hook detached throughout
          * (sdr_rx.c's ISR already skips calling a NULL hook safely). */
@@ -11432,9 +11463,6 @@ static void apply_demod_mode(demod_mode_t mode)
          */
         iqbal_fir_olvida();
 
-#ifdef CHIP_APM32F407
-        speaker_pa_hold(1U);
-#endif
         /* 1. Stop both DMA channels cleanly before tearing down the
          *    peripherals underneath them. */
         sdr_rx_stop();
@@ -11474,7 +11502,7 @@ static void apply_demod_mode(demod_mode_t mode)
         {
             /* codec restarted: let its output settle before giving the speaker back */
             uint32_t t0 = g_msticks;
-            while ((g_msticks - t0) < 30U) { }
+            while ((g_msticks - t0) < SPK_ASIENTO_MS) { }   /* see SILENCE, THEN THE AMP, THEN THE CODEC */
             speaker_pa_hold(0U);
         }
 #endif

@@ -176,6 +176,8 @@ void aic3204_set_rate_power_up(void);
  * R16/R17) - see the comment above this function's definition in
  * aic3204.c for why. Returns 1 if both L/R writes were ACKed.
  */
+/* Ramps the DAC output down to mute, soft-stepped, before a codec reset. See aic3204.c. */
+uint8_t aic3204_soft_mute(void);
 uint8_t aic3204_set_volume_db(float db);
 
 /*
