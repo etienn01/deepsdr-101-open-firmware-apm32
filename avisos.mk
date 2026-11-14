@@ -240,7 +240,7 @@ CALIENTES = demod_am.o nr_ss.o anotch.o audiofil.o sam.o disc_fm.o nco.o \
 # spectrum.c (14/11/2026), APM32 build only: compon(), which builds every row of the panadapter, was the largest
 # single user of the CPU at 192 kHz (12-14 %); at -O2 the radio went from 26 to 28 frames a second, for 1,168 bytes.
 ifneq (,$(findstring CHIP_APM32F407,$(DEFS_EXTRA)))
-CALIENTES += iqbal.o spectrum.o
+CALIENTES += iqbal.o spectrum.o memrapido.o
 endif
 
 
@@ -292,6 +292,9 @@ endif
 # leerla. Si se queda arriba, los "CALIENTES +=" de FT8 llegan tarde y el
 # decodificador se compila a -Os sin que nadie avise.
 $(addprefix $(BUILD_DIR)/,$(CALIENTES)): CFLAGS += -O2
+
+# memrapido.c is memset() itself: GCC must not turn its loops back into calls to memset().
+$(BUILD_DIR)/memrapido.o: CFLAGS += -fno-tree-loop-distribute-patterns
 
 # ---------------------------------------------------------------------
 # COMPROBACION DE PILA EN CADA COMPILACION (24/09/2026)
