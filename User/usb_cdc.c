@@ -39,7 +39,7 @@ static volatile uint32_t s_perdidos;
  * packet is at most 64, so the copy never runs past their end.
  *
  * Left in main SRAM on purpose: s_linea and s_aud_hz (they have initial
- * values, and .tcmram is zero-filled, not loaded), s_aud_tira (3 bytes), the
+ * values, and .tcmram is zero-filled, not loaded), s_aud_tira (4 bytes), the
  * ring descriptors and g_usb_cdc.
  */
 #if defined(__arm__)
@@ -89,9 +89,25 @@ static volatile uint8_t s_tx_ocupado;
  * comprueban que se quedo configurado; si se les devuelve otra cosa, dan el
  * puerto por roto.
  */
-static uint8_t s_linea[7] = { 0x00U, 0xC2U, 0x01U, 0x00U, /* 115200 */
-                              0x00U, 0x00U, 0x08U };      /* 1 stop, sin
-                                                           * paridad, 8 bits */
+/*
+ * 8 bytes for a 7-byte line coding, and the 4-byte s_aud_tira below for a
+ * 3-byte frequency: usb_rxfifo_read() (drv_usb_core.c) stores the control
+ * OUT data stage in whole 32-bit words, so a 7-byte SET_LINE_CODING writes 8
+ * bytes and a 3-byte SET_CUR writes 4. With 7 and 3 the extra byte landed on
+ * whatever the linker put next (waterfall.c's s_todo after s_linea, the CDC
+ * "TX busy" flag s_tx_ocupado after s_aud_tira, which could stall the serial
+ * output to the PC). cdc_req() also refuses a data stage longer than the
+ * request's own payload, so a host can never make it write further. The 8th
+ * byte is never sent back: GET_LINE_CODING returns 7.
+ */
+#define LINEA_LEN  7U   /* CDC line coding: dwDTERate, bCharFormat, bParityType, bDataBits */
+#define AUD_HZ_LEN 3U   /* UAC1 sampling frequency, 24-bit little endian */
+#define CTL_WORDS(n) ((((n) + 3U) / 4U) * 4U)  /* bytes usb_rxfifo_read() stores for n */
+
+static uint8_t s_linea[CTL_WORDS(LINEA_LEN)] = {
+    0x00U, 0xC2U, 0x01U, 0x00U, /* 115200 */
+    0x00U, 0x00U, 0x08U         /* 1 stop, sin paridad, 8 bits */
+};
 
 /*
  * LAS PETICIONES DE LA CLASE DE AUDIO.
@@ -129,7 +145,7 @@ static uint8_t s_aud_hz[3] = {
  * Asi s_aud_hz es siempre la verdad -la misma constante que esta en el
  * descriptor- y lo que llega se acepta y se tira.
  */
-static uint8_t s_aud_tira[3];
+static uint8_t s_aud_tira[CTL_WORDS(AUD_HZ_LEN)];  /* word multiple: see s_linea */
 
 #define CDC_SET_LINE_CODING        0x20U
 #define CDC_GET_LINE_CODING        0x21U
@@ -286,7 +302,7 @@ static uint8_t cdc_req(usb_dev *udev, usb_req *req)
         }
         if (req->bRequest == AUD_GET_CUR) {
             udev->dev.transc_in[0].xfer_buf = s_aud_hz;
-            udev->dev.transc_in[0].remain_len = 3U;
+            udev->dev.transc_in[0].remain_len = AUD_HZ_LEN;
             return USBD_OK;
         }
         if (req->bRequest == AUD_SET_CUR) {
@@ -294,8 +310,9 @@ static uint8_t cdc_req(usb_dev *udev, usb_req *req)
              * descriptor. Aceptarla es lo correcto - rechazarla hace que
              * algunos programas dejen de abrir la grabacion-, y hacerle
              * caso seria mentir, porque el reloj de aqui no se mueve. */
+            if (req->wLength > AUD_HZ_LEN) { return USBD_FAIL; }
             udev->dev.transc_out[0].xfer_buf = s_aud_tira;
-            udev->dev.transc_out[0].remain_len = 3U;
+            udev->dev.transc_out[0].remain_len = AUD_HZ_LEN;
             return USBD_OK;
         }
         return USBD_FAIL;
@@ -306,13 +323,14 @@ static uint8_t cdc_req(usb_dev *udev, usb_req *req)
         /* Los siete bytes llegan en la fase de datos; el nucleo los deja
          * en el buffer de control y avisa por ctlx_out. Aqui solo se dice
          * donde ponerlos. */
+        if (req->wLength > LINEA_LEN) { return USBD_FAIL; }
         udev->dev.transc_out[0].xfer_buf = s_linea;
-        udev->dev.transc_out[0].remain_len = 7U;
+        udev->dev.transc_out[0].remain_len = LINEA_LEN;
         return USBD_OK;
 
     case CDC_GET_LINE_CODING:
         udev->dev.transc_in[0].xfer_buf = s_linea;
-        udev->dev.transc_in[0].remain_len = 7U;
+        udev->dev.transc_in[0].remain_len = LINEA_LEN;
         return USBD_OK;
 
     case CDC_SET_CONTROL_LINE_STATE:
