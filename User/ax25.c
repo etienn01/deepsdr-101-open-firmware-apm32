@@ -215,7 +215,7 @@ void ax25_start_fsk(float fs_hz, float baud, float marca_hz, float espacio_hz)
     s_nivel = 1e-6f;
 
     s_fase = 0U;
-    s_inc = (uint32_t)((double)s_baud / (double)fs_hz * 4294967296.0 + 0.5);
+    s_inc = nco_inc_de(s_baud, fs_hz);
     s_sig_ant = 0U;
 
     s_nrzi_ant = 0U; s_hay_ant = 0U;

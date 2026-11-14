@@ -26,6 +26,19 @@ FUNCS = ['scan_lee', 'scan_mira', 'mem_hay_senal', 'scan_ventana',
          'mem_scan_para', 'mem_scan_salta', 'mem_scan_conmuta',
          'mem_scan_poll']
 
+# Y LAS DEL BARRIDO DE RANGO - 11/11/2026, con el escaner de tramo.
+#
+# Van en su propia lista y en su propio fichero porque las usa OTRO banco
+# -sim/escaner.c-, que ademas enlaza el banco.c de verdad en vez de
+# apanarlo: lo que ahi se mide es que una emisora encontrada dos veces
+# suba el contador en vez de ocupar dos celdas, y eso no se puede medir
+# contra un banco de mentira.
+#
+# mem_scan_poll() y compania las necesitan los dos, asi que el fichero de
+# rango incluye al de memorias en vez de repetirlas.
+FUNCS_RNG = ['rng_pon_mhz', 'rng_paso_hz', 'rng_scan_salta',
+             'rng_apunta', 'rng_scan_conmuta']
+
 trozos = []
 
 # Las constantes, que son la mitad de lo que hay que comprobar.
@@ -49,6 +62,19 @@ for f in FUNCS:
 cab = ('/* GENERADO por tools/barrido_dump.py desde User/main.c. No se\n'
        ' * edita: lo que valga se cambia alli. */\n\n')
 out.write_text(cab + '\n'.join(trozos) + '\n', encoding='utf-8')
+
+# Y el del rango, al lado.
+out_r = out.with_name('rango_maquina.h')
+trozos_r = []
+for f in FUNCS_RNG:
+    m = re.search(r'^static\s+[\w ]+\**%s\s*\([^)]*\)\s*\n\{' % re.escape(f),
+                  src, re.M)
+    if not m:
+        sys.exit('no encuentro el cuerpo de %s()' % f)
+    fin = src.index('\n}\n', m.start())
+    trozos_r.append(src[m.start():fin + 3].rstrip() + '\n')
+out_r.write_text(cab + '\n'.join(trozos_r) + '\n', encoding='utf-8')
 out_c.write_text(cab + '\n'.join(consts) + '\n', encoding='utf-8')
-print('%s: %d funciones; %s: %d constantes'
-      % (out.name, len(FUNCS), out_c.name, len(defs)))
+print('%s: %d funciones; %s: %d; %s: %d constantes'
+      % (out.name, len(FUNCS), out_r.name, len(FUNCS_RNG),
+         out_c.name, len(defs)))

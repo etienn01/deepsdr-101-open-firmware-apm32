@@ -9,3 +9,6 @@
 #define SCAN_MARGEN_DB         10.0f
 #define SCAN_WFM_RUIDO_DB      60.0f
 #define SCAN_PISO_SUBE_DB      0.5f
+#define SCAN_RNG_PARADA_MS     3000UL
+#define SCAN_RNG_ESPERA_MS     60U
+#define SCAN_RNG_MIRA_MS       60U

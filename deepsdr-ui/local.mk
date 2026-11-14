@@ -308,7 +308,8 @@ BASURA_FW  := ecualiz cw rtty rtty_auto rtty_scope fft navtex dsc psk31 ais_rx a
               ale_golay s4415 stanag_rx wspr_rx wspr_msg wspr_fano jtty_rx \
               jtty_fec jtty_msg ax25 sstv wefax hell nco nco_tabla hfdl_ram \
               hfdl_viterbi disc_fm \
-              stanag_det dcf77 rapido hora_comun hora_rbu hora_wwv rds rds_pi \
+              stanag_det dcf77 rapido hora_comun hora_rbu hora_wwv hora_rwm \
+              rds rds_pi \
               nr_ss anotch \
               hfdl_modo hfdl_acars hfdl_agc hfdl_aircraft hfdl_costas hfdl_crc \
               hfdl_data_segment hfdl_deinterleaver hfdl_demod_chain \
@@ -488,9 +489,9 @@ comprueba: copiasbin
 # firmware no depende de nada del GD32 a proposito, justo para poder medirlo
 # aqui con señal sintetica. Lo que comprueba de verdad es que SIN señal no
 # se invente una hora.
-out/dcf77test: sim/dcf77test.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
+out/dcf77test: sim/dcf77test.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
 	@mkdir -p out
-	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/dcf77test.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/dcf77test.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
 
 dcf77: out/dcf77test ; ./out/dcf77test
 
@@ -501,9 +502,9 @@ comprueba: dcf77
 # distintos: paridades impares, BCD al reves y hora en UTC que hay que
 # convertir. Comparten el motor de flancos, y por eso los dos tienen que
 # pasar: un cambio en ese motor que arregle uno y rompa el otro se ve aqui.
-out/msftest: sim/msftest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
+out/msftest: sim/msftest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
 	@mkdir -p out
-	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/msftest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/msftest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
 
 msf: out/msftest ; ./out/msftest
 
@@ -524,12 +525,12 @@ comprueba: msf
 #
 # La muestra vive en sim/muestras/, que esta en .gitignore, asi que el
 # banco se salta diciendolo cuando no esta - como alsreal.
-out/msfreal: sim/msf_real.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c \
+out/msfreal: sim/msf_real.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c \
              $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c \
              $(FIRMWARE)/User/hora_comun.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/msf_real.c \
-	      $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c \
+	      $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c \
 	      $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c \
 	      $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
 
@@ -580,9 +581,9 @@ puntas: out/puntas ; ./out/puntas && $(MAKE) png
 # 162 kHz el temporizador del micro da pasos de ~190 Hz, y hay que demodular
 # un radian por encima de eso. Por eso el banco emite la fase CON deriva, de
 # 1 a 500 Hz, y no solo limpia.
-out/alstest: sim/alstest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
+out/alstest: sim/alstest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
 	@mkdir -p out
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -I$(FIRMWARE)/User -o $@ sim/alstest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I$(FIRMWARE)/User -o $@ sim/alstest.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
 
 als: out/alstest ; ./out/alstest
 
@@ -599,9 +600,9 @@ als: out/alstest ; ./out/alstest
 # comprueba ya no es que la hora decodificada se parezca a la de antes,
 # sino que salgan las 04:21 del sabado 10/10/26. Eso si es un veredicto, y de los buenos: no se compara contra
 # nosotros mismos.
-out/alsreal: sim/als_real.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
+out/alsreal: sim/als_real.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c
 	@mkdir -p out
-	$(CC) $(CFLAGS) -D_GNU_SOURCE -I$(FIRMWARE)/User -o $@ sim/als_real.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I$(FIRMWARE)/User -o $@ sim/als_real.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(LDLIBS)
 
 .PHONY: alsreal
 alsreal: out/alsreal ; ./out/alsreal
@@ -609,7 +610,7 @@ alsreal: out/alsreal ; ./out/alsreal
 # La fase DESDE I/Q, con ruido. Ver la cabecera de sim/als_iq.c: als_real.c
 # mide la fase ya extraida -y filtrada a 40 Hz- por tools/als_fase.py, que
 # es un paso que la radio no daba. Esto mide la cadena de verdad.
-out/alsiq: sim/als_iq.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(FIRMWARE)/User/rapido.c
+out/alsiq: sim/als_iq.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c $(FIRMWARE)/User/hora_rbu.c $(FIRMWARE)/User/hora_wwv.c $(FIRMWARE)/User/hora_comun.c $(FIRMWARE)/User/rapido.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I$(FIRMWARE)/User -o $@ $^ $(LDLIBS)
 
@@ -1565,6 +1566,63 @@ out/cwaire: sim/cwaire.c $(FIRMWARE)/User/cw.c $(FIRMWARE)/User/cw.h
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/cwaire.c $(FIRMWARE)/User/cw.c $(LDLIBS)
 
+# QUE LAS TABLAS DE RANGOS DE LAS FUENTES SIGAN COMPARTIDAS - 13/11/2026.
+# Eran 76 rangos de 6 bytes repetidos cuatro y dos veces: 456 bytes. Y hace
+# falta vigilarlo porque fonts_data.c dice "no editar a mano, se regenera con
+# gen_assets.py" y ese guion no esta en el arbol: el dia que aparezca, volvera
+# a emitirlas por separado sin que nada chille.
+.PHONY: fuenterangos
+fuenterangos: ; python3 $(FIRMWARE)/tools/fuente_rangos_check.py $(FIRMWARE)/User/fonts_data.c
+
+comprueba: fuenterangos
+
+# RWM, 4996/9996/14996 kHz, Moscu - 13/11/2026. Pedido por el dueño.
+# OJO con lo que esta emisora promete: NO manda la hora del dia. Lo que da es
+# el borde de segundo, el de MINUTO y el DUT1. Ver User/hora_rwm.h.
+# El banco mide el decodificador de verdad con una señal hecha segun la
+# norma, y lleva dentro tres fallos que caz de mi propio detector: el
+# seguidor de pico demasiado rapido, el borde de minuto inventado con ruido
+# solo, y las dos ventanas de ancho solapadas.
+out/rwm: sim/rwm.c $(FIRMWARE)/User/hora_rwm.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ $^ $(LDLIBS)
+
+.PHONY: rwm
+rwm: out/rwm ; ./out/rwm
+
+comprueba: rwm
+
+# EL ORDEN DE "APLICAR" EN LA PANTALLA DE LA HORA - 13/11/2026.
+# Avisado por un probador: en RDS la hora se ensena con segundos pero al
+# pulsar Aplicar el reloj se quedaba en el HH:MM anterior. Era el orden de
+# dos escrituras del RTC. La otra rama lo llevaba escrito -"EL ORDEN
+# IMPORTA: la fecha PRIMERO"- y afirmaba ademas que la del RDS tenia el
+# mismo cuidado. No lo tenia. Un comentario no es una comprobacion.
+.PHONY: horaaplica
+horaaplica: ; python3 $(FIRMWARE)/tools/hora_aplica_check.py $(FIRMWARE)/User/main.c
+
+comprueba: horaaplica
+
+# HASTA DONDE AGUANTA EL SINCRONISMO, Y QUE SE ROMPE PRIMERO - 13/11/2026.
+# Avisado por un usuario: "el umbral de captura de sincronismo en SSTV es
+# excesivamente alto... mucho SSTV en 20 metros y ni una imagen capturada".
+# Ninguno de los bancos que habia contestaba la pregunta: sstvtest.c barre
+# ruido CON cabecera -y asi el sincronismo de linea nunca se ve fallar- y
+# sstv_auto.c se para en sigma 0,30, donde todavia acierta. Esto busca el
+# acantilado, en los dos casos, y se queda con suelos.
+out/sstvumbral: sim/sstv_umbral.c sim/sstv_genera.h $(FIRMWARE)/User/sstv.c \
+                $(FIRMWARE)/User/disc_fm.c $(FIRMWARE)/User/nco.c \
+                $(FIRMWARE)/User/nco_tabla.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/sstv_umbral.c \
+	  $(FIRMWARE)/User/sstv.c $(FIRMWARE)/User/disc_fm.c \
+	  $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c $(LDLIBS)
+
+.PHONY: sstvumbral
+sstvumbral: out/sstvumbral ; ./out/sstvumbral
+
+comprueba: sstvumbral
+
 out/sstvaire: sim/sstvaire.c $(FIRMWARE)/User/sstv.c $(FIRMWARE)/User/disc_fm.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c $(FIRMWARE)/User/sstv.h
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/sstvaire.c $(FIRMWARE)/User/sstv.c $(FIRMWARE)/User/disc_fm.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c $(LDLIBS)
@@ -2196,6 +2254,24 @@ out/cadenaspc: sim/cadena_spc.c sim/w25q_sim.c sim/gd32_pines.c \
 cadenaspc: out/cadenaspc ; ./out/cadenaspc
 
 comprueba: cadenaspc
+
+# ---------------------------------------------------------------------
+# EL ESCANER DE TRAMO (11/11/2026). Ver la cabecera de sim/escaner.c:
+# corre la maquina de verdad -la saca tools/barrido_dump.py de
+# User/main.c- contra el banco de memorias DE VERDAD, que es donde vive
+# lo que hay que medir: que una emisora encontrada dos veces suba el
+# contador en vez de ocupar dos celdas.
+out/escaner: sim/escaner.c sim/rango_maquina.h sim/barrido_maquina.h \
+             $(FIRMWARE)/User/banco.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -Wno-unused-function -Wno-unused-variable \
+	      -Ihostinc -Isim -I$(FIRMWARE)/User \
+	      -o $@ sim/escaner.c $(FIRMWARE)/User/banco.c $(LDLIBS)
+
+.PHONY: escaner
+escaner: out/escaner ; ./out/escaner
+
+comprueba: escaner
 
 # ---------------------------------------------------------------------
 # EL BUFFER QUE LA CASCADA LE PRESTA A FT8 (25/09/2026). Dos mitades:
@@ -3114,7 +3190,7 @@ comprueba: loraya
 # entregado mal cuatro veces y las cuatro eran de logica. Las funciones
 # salen de User/main.c tal cual, con barrido_dump.py, para que la prueba
 # no pueda quedarse probando una copia vieja.
-sim/barrido_maquina.h sim/barrido_consts.h &: tools/barrido_dump.py \
+sim/barrido_maquina.h sim/barrido_consts.h sim/rango_maquina.h &: tools/barrido_dump.py \
                                               $(FIRMWARE)/User/main.c
 	python3 $< $(FIRMWARE)/User/main.c sim/barrido_maquina.h
 
@@ -3990,7 +4066,7 @@ endif
 # se le dan los cabos sueltos en el propio banco: asi los nombres salen del
 # fichero de verdad y no de una copia que se quede vieja.
 out/horabtn: sim/hora_btn.c sim/lcd_sim.c gfx2/gfx2.c gfx2/fonts_data.c \
-             $(FIRMWARE)/User/ui_hora.c $(FIRMWARE)/User/dcf77.c \
+             $(FIRMWARE)/User/ui_hora.c $(FIRMWARE)/User/dcf77.c $(FIRMWARE)/User/hora_rwm.c \
              $(FIRMWARE)/User/rapido.c $(FIRMWARE)/User/hora_comun.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) -I$(FIRMWARE)/User -o $@ $(filter %.c,$^) $(LDLIBS)
@@ -5306,6 +5382,19 @@ comprueba: rfdc
 # -la entrada de verdad- y mide el ruido que queda, NO el nivel: el AGC
 # devuelve el nivel, asi que una atenuacion uniforme no cuenta como
 # reduccion. Y lo mide en los dos modos: AM es el testigo.
+# El boton de Ruido conmutado muchas veces: el aviso dice que el audio se
+# queda mudo y solo vuelve apagando la radio. Mide lo unico que se nota,
+# que despues de cada conmutacion siga habiendo audio, y en varias fases.
+out/nrconmuta: sim/nr_conmuta.c sim/demod_stubs.c $(FIRMWARE)/User/demod_am.c \
+           $(DEMOD_REALES)
+	@mkdir -p out
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I $(FIRMWARE)/User -o $@ $(FUENTES) $(LDLIBS)
+
+.PHONY: nrconmuta
+nrconmuta: out/nrconmuta ; ./out/nrconmuta
+
+comprueba: nrconmuta
+
 out/samnr: sim/sam_nr.c sim/demod_stubs.c $(FIRMWARE)/User/demod_am.c \
            $(DEMOD_REALES)
 	@mkdir -p out

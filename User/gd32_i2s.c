@@ -826,6 +826,24 @@ void gd32_i2s_stream_stop(void)
  * Left in place since it's cheap and still useful for spotting a
  * genuine half-selection bug if one shows up later, just no longer
  * the leading suspect for this particular report. */
+/*
+ * CUANTAS TRAMAS PIDE CADA MEDIA, QUE ES LA UNICA VERDAD - 12/11/2026.
+ *
+ * La pareja "lo que entrega el demodulador" / "lo que tiene armado el
+ * I2S" se ha desalineado dos veces en la historia de este fichero, y las
+ * dos el sintoma fue audio roto. Mientras cada lado lo dedujera por su
+ * cuenta -uno de la bandera de los 192 kHz, el otro del ultimo armado-
+ * se podia volver a desalinear una tercera.
+ *
+ * Esto deja un solo sitio donde preguntarlo: el que de verdad manda, que
+ * es el DMA que esta sonando. Ver donde se usa, al final de
+ * demod_am_process_raw().
+ */
+uint32_t gd32_i2s_frames_per_half(void)
+{
+    return s_stream_frames_per_half;
+}
+
 void gd32_i2s_stream_write_half(const int16_t *stereo_frames, uint32_t n_frames)
 {
     /*
@@ -1008,7 +1026,44 @@ void gd32_i2s_stream_write_half(const int16_t *stereo_frames, uint32_t n_frames)
      * oye y se dice, y lo de detras del array no se oye como lo que es.
      */
     if (n_frames != s_stream_frames_per_half) {
-        memset(dst, 0, (size_t)s_stream_words_per_half * sizeof dst[0]);
+        /*
+         * ==============================================================
+         * LO QUE QUEPA, Y EL RESTO A CERO - 12/11/2026.
+         * ==============================================================
+         *
+         * Aqui ponia el bloque ENTERO a cero y se iba. El razonamiento de
+         * abajo sigue siendo bueno en su mitad -no copiar de mas alla de
+         * un array- pero la otra mitad, "un bloque mudo se oye y se
+         * dice", no se cumple: la condicion no es un suceso suelto. El
+         * comentario de la traza, cuatro lineas mas abajo, ya lo dice con
+         * todas sus letras: "si las dos cuentas se desalinean, se
+         * desalinean en TODOS los bloques, 375 veces por segundo".
+         *
+         * O sea que esto no era un bloque mudo: era LA RADIO MUDA PARA
+         * SIEMPRE, hasta apagarla. Y muda sin decir nada, porque el unico
+         * aviso sale por el puerto serie, que va apagado de serie.
+         *
+         * Y NO LES PASA A TODOS LOS MODOS POR IGUAL. Quien llama desde
+         * FM ancha entrega SDR_RX_BLOCK_SAMPLES_WFM siempre, sin
+         * preguntar; AM, banda lateral y FM estrecha entregan 256 o 512
+         * segun la bandera de los 192 kHz. Un descuadre deja mudo todo
+         * menos FM ancha, sobrevive al cambio de modo y solo lo quita
+         * apagar la radio.
+         *
+         * Se copia lo que quepa y se rellena con silencio lo que falte.
+         * No se lee ni un byte de mas alla del origen -que es lo unico
+         * que el codigo de antes venia a evitar- ni se escribe de mas
+         * alla del destino. Lo que se oye es sucio, a tirones, y se
+         * investiga; lo que habia antes no se oia en absoluto.
+         */
+        uint32_t cabe = (n_frames < s_stream_frames_per_half)
+                            ? n_frames : s_stream_frames_per_half;
+
+        memcpy(dst, stereo_frames, (size_t)(cabe * 2U) * sizeof dst[0]);
+        if (cabe < s_stream_frames_per_half) {
+            memset(&dst[cabe * 2U], 0,
+                   (size_t)((s_stream_frames_per_half - cabe) * 2U) * sizeof dst[0]);
+        }
         /*
          * Y SE DICE UNA SOLA VEZ - 24/10/2026, revision a fondo.
          *

@@ -43,7 +43,7 @@ static uint16_t extract_uint16(const uint8_t *buf)
  * its low 20 bits meaningful (the two call sites below already mask
  * it that way while assembling it, same as dumphfdl's own callers do).
  */
-static double parse_coordinate(uint32_t raw)
+static float parse_coordinate(uint32_t raw)
 {
     int32_t signed_val;
     if (raw & 0x80000u) { /* bit 19 set - negative in 20-bit two's complement */
@@ -51,7 +51,7 @@ static double parse_coordinate(uint32_t raw)
     } else {
         signed_val = (int32_t)raw;
     }
-    return (double)signed_val * 180.0 / (double)0x7FFFF; /* 0x7FFFF = 2^19-1, the max positive 20-bit value - same divisor dumphfdl uses */
+    return (float)signed_val * (180.0f / 524287.0f); /* 524287 = 0x7FFFF = 2^19-1, the max positive 20-bit value - same divisor dumphfdl uses */
 }
 
 static struct hfdl_hfnpdu_time parse_utc_time(uint32_t t)

@@ -77,6 +77,23 @@ typedef struct {
     uint16_t fil_lo;    /* los dos cortes del filtro de audio, en Hz */
     uint16_t fil_hi;
     uint16_t cw;        /* ancho del paso banda de CW en Hz, 0 = no era CW */
+    /*
+     * CUANTAS VECES SE HA OIDO ALGO AQUI - 11/11/2026, pedido por un
+     * usuario junto con el barrido de rango.
+     *
+     * Lo pone el barrido: cada vez que se para en una frecuencia que ya
+     * esta apuntada, sube uno en vez de escribir otra memoria igual. Asi
+     * una tarde de barrido deja las quince celdas ORDENADAS POR USO sin
+     * que nadie tenga que mirar un registro: lo que sale mucho sube.
+     *
+     * Una memoria grabada a mano la deja a cero, y cero quiere decir "esto
+     * no lo encontro el barrido, lo puse yo".
+     *
+     * Entra en el hueco de relleno que ya tenia la estructura: 12 bytes
+     * eran doce y siguen siendo catorce por alineacion, asi que son 120
+     * bytes de RAM para las sesenta memorias.
+     */
+    uint16_t vistas;    /* veces que el barrido ha oido algo aqui; 0 = a mano */
 } banco_mem_t;
 
 /* Pone las sesenta a cero y los cuatro nombres vacios. No toca el disco. */
@@ -149,6 +166,24 @@ uint8_t banco_usadas(uint8_t banco);
  * 0xFF si el banco esta vacio del todo. Es lo que mueve el barrido, y vive
  * aqui y no en main.c para que el banco pueda medirse solo.
  */
+/*
+ * LAS TRES DEL BARRIDO DE RANGO - 11/11/2026. El porque entero esta en
+ * banco.c, delante de banco_busca_hz().
+ *
+ *   banco_busca_hz(b, hz, tol)  la memoria de ese banco que cae a menos de
+ *                               `tol` hercios de `hz`, o 0xFF. No compara
+ *                               con == a proposito: ver alli.
+ *   banco_libre(b)              la primera celda vacia, o 0xFF si lleno.
+ *   banco_menos_oida(b)         la que menos veces ha oido el barrido, sin
+ *                               mirar las grabadas a mano (vistas == 0), o
+ *                               0xFF si no hay ninguna suya.
+ *   banco_vista(b, i)           sube el contador, con tope en 65535.
+ */
+uint8_t banco_busca_hz(uint8_t b, uint32_t hz, uint32_t tol_hz);
+uint8_t banco_libre(uint8_t b);
+uint8_t banco_menos_oida(uint8_t b);
+void    banco_vista(uint8_t b, uint8_t i);
+
 uint8_t banco_siguiente(uint8_t banco, uint8_t desde);
 
 /*
@@ -163,7 +198,15 @@ uint8_t banco_siguiente(uint8_t banco, uint8_t desde);
  * compartida, porque esa la reparten FT8 y HFDL y grabar una memoria tiene
  * que poder hacerse en cualquier modo.
  */
-#define BANCO_CSV_MIN  2560U
+/*
+ * Sube a 3072 el 11/11/2026, al entrar la novena columna (vistas): el
+ * renglon mas largo posible pasa de 39 a 45 caracteres, y sesenta de esos
+ * mas la cabecera y los cuatro nombres son 2.845. Ver banco_a_csv().
+ *
+ * No cuesta RAM: quien se lo presta es s_gsv_buf, que mide 4.096 desde
+ * mucho antes de esto.
+ */
+#define BANCO_CSV_MIN  3072U
 uint8_t banco_carga(char *buf, uint32_t cap);   /* 0 si no habia o estaba roto */
 uint8_t banco_guarda(char *buf, uint32_t cap);  /* 0 si no se pudo escribir */
 

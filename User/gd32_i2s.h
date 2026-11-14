@@ -184,6 +184,7 @@ void gd32_i2s_stream_arm(uint32_t frames_per_half);
  * son las que espera el I2S esto suelta silencio y lo grita por el puerto
  * serie, en vez de leer lo que haya detras.
  */
+uint32_t gd32_i2s_frames_per_half(void);
 void gd32_i2s_stream_write_half(const int16_t *stereo_frames, uint32_t n_frames);
 
 /* TX-side FERR diagnostics (see gd32_i2s.c's own comments) - was

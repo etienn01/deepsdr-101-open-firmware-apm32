@@ -7,6 +7,26 @@
  * NO EDITAR A MANO: se regenera con tools/gen_assets.py.
  */
 
+/*
+ * LAS TABLAS DE RANGOS SE COMPARTEN - 13/11/2026, 456 bytes.
+ *
+ * Las cuatro fuentes de interfaz cubren EXACTAMENTE los mismos veintidos
+ * tramos de codepoints -se comparo rango a rango, no de memoria- y las dos
+ * de numeros los mismos diez. Una tabla de rangos no describe los pixeles:
+ * describe QUE caracteres hay y en que orden, y eso es identico porque las
+ * cuatro se generaron del mismo juego de caracteres.
+ *
+ * Asi que aqui vive UNA de cada y las demas apuntan a ella. Son 76 rangos
+ * de 6 bytes que estaban cuatro veces en la flash de un chip donde quedaban
+ * trescientos ochenta y ocho.
+ *
+ * *** LA CABECERA DICE "NO EDITAR A MANO: se regenera con gen_assets.py" Y
+ * ESE GUION NO ESTA EN EL ARBOL. *** Asi que este fichero ya solo se
+ * mantiene a mano, y una regeneracion futura desharia esto sin avisar. Lo
+ * vigila tools/fuente_rangos_check.py, que vuelve a comparar las tablas y
+ * exige que se compartan.
+ */
+
 /* ------------------------------------------------------------------ */
 #include "font_num_20.h"
 
@@ -797,21 +817,9 @@ const gfx2_glyph_t font_num_44_glyphs[23] = {
     {   8890,  28,  25,    0,   18,  28 }, /* 'z' */
 };
 
-const gfx2_range_t font_num_44_ranges[10] = {
-    { 0x0020, 0x0020, 0 },
-    { 0x002B, 0x002E, 1 },
-    { 0x0030, 0x003A, 5 },
-    { 0x0042, 0x0042, 16 },
-    { 0x0048, 0x0048, 17 },
-    { 0x004D, 0x004D, 18 },
-    { 0x0064, 0x0064, 19 },
-    { 0x006B, 0x006B, 20 },
-    { 0x006D, 0x006D, 21 },
-    { 0x007A, 0x007A, 22 },
-};
 
 const gfx2_font_t font_num_44 = {
-    font_num_44_bitmap, font_num_44_glyphs, font_num_44_ranges,
+    font_num_44_bitmap, font_num_44_glyphs, font_num_20_ranges,
     10, 43, 11, 54
 };
 
@@ -2080,33 +2088,9 @@ const gfx2_glyph_t font_ui_14_glyphs[117] = {
     {   5937,   9,  13,    0,    2,   9 }, /* 'U+00FC' */
 };
 
-const gfx2_range_t font_ui_14_ranges[22] = {
-    { 0x0020, 0x007E, 0 },
-    { 0x00A1, 0x00A1, 95 },
-    { 0x00AA, 0x00AA, 96 },
-    { 0x00B0, 0x00B1, 97 },
-    { 0x00B5, 0x00B5, 99 },
-    { 0x00B7, 0x00B7, 100 },
-    { 0x00BA, 0x00BA, 101 },
-    { 0x00BF, 0x00BF, 102 },
-    { 0x00C1, 0x00C1, 103 },
-    { 0x00C9, 0x00C9, 104 },
-    { 0x00CD, 0x00CD, 105 },
-    { 0x00D1, 0x00D1, 106 },
-    { 0x00D3, 0x00D3, 107 },
-    { 0x00DA, 0x00DA, 108 },
-    { 0x00DC, 0x00DC, 109 },
-    { 0x00E1, 0x00E1, 110 },
-    { 0x00E9, 0x00E9, 111 },
-    { 0x00ED, 0x00ED, 112 },
-    { 0x00F1, 0x00F1, 113 },
-    { 0x00F3, 0x00F3, 114 },
-    { 0x00FA, 0x00FA, 115 },
-    { 0x00FC, 0x00FC, 116 },
-};
 
 const gfx2_font_t font_ui_14 = {
-    font_ui_14_bitmap, font_ui_14_glyphs, font_ui_14_ranges,
+    font_ui_14_bitmap, font_ui_14_glyphs, font_ui_11_ranges,
     22, 14, 4, 18
 };
 
@@ -2646,33 +2630,9 @@ const gfx2_glyph_t font_ui_14b_glyphs[117] = {
     {   6452,  10,  13,    0,    2,  10 }, /* 'U+00FC' */
 };
 
-const gfx2_range_t font_ui_14b_ranges[22] = {
-    { 0x0020, 0x007E, 0 },
-    { 0x00A1, 0x00A1, 95 },
-    { 0x00AA, 0x00AA, 96 },
-    { 0x00B0, 0x00B1, 97 },
-    { 0x00B5, 0x00B5, 99 },
-    { 0x00B7, 0x00B7, 100 },
-    { 0x00BA, 0x00BA, 101 },
-    { 0x00BF, 0x00BF, 102 },
-    { 0x00C1, 0x00C1, 103 },
-    { 0x00C9, 0x00C9, 104 },
-    { 0x00CD, 0x00CD, 105 },
-    { 0x00D1, 0x00D1, 106 },
-    { 0x00D3, 0x00D3, 107 },
-    { 0x00DA, 0x00DA, 108 },
-    { 0x00DC, 0x00DC, 109 },
-    { 0x00E1, 0x00E1, 110 },
-    { 0x00E9, 0x00E9, 111 },
-    { 0x00ED, 0x00ED, 112 },
-    { 0x00F1, 0x00F1, 113 },
-    { 0x00F3, 0x00F3, 114 },
-    { 0x00FA, 0x00FA, 115 },
-    { 0x00FC, 0x00FC, 116 },
-};
 
 const gfx2_font_t font_ui_14b = {
-    font_ui_14b_bitmap, font_ui_14b_glyphs, font_ui_14b_ranges,
+    font_ui_14b_bitmap, font_ui_14b_glyphs, font_ui_11_ranges,
     22, 14, 4, 18
 };
 
@@ -3424,33 +3384,9 @@ const gfx2_glyph_t font_ui_18b_glyphs[117] = {
     {   9814,  12,  16,    0,    3,  12 }, /* 'U+00FC' */
 };
 
-const gfx2_range_t font_ui_18b_ranges[22] = {
-    { 0x0020, 0x007E, 0 },
-    { 0x00A1, 0x00A1, 95 },
-    { 0x00AA, 0x00AA, 96 },
-    { 0x00B0, 0x00B1, 97 },
-    { 0x00B5, 0x00B5, 99 },
-    { 0x00B7, 0x00B7, 100 },
-    { 0x00BA, 0x00BA, 101 },
-    { 0x00BF, 0x00BF, 102 },
-    { 0x00C1, 0x00C1, 103 },
-    { 0x00C9, 0x00C9, 104 },
-    { 0x00CD, 0x00CD, 105 },
-    { 0x00D1, 0x00D1, 106 },
-    { 0x00D3, 0x00D3, 107 },
-    { 0x00DA, 0x00DA, 108 },
-    { 0x00DC, 0x00DC, 109 },
-    { 0x00E1, 0x00E1, 110 },
-    { 0x00E9, 0x00E9, 111 },
-    { 0x00ED, 0x00ED, 112 },
-    { 0x00F1, 0x00F1, 113 },
-    { 0x00F3, 0x00F3, 114 },
-    { 0x00FA, 0x00FA, 115 },
-    { 0x00FC, 0x00FC, 116 },
-};
 
 const gfx2_font_t font_ui_18b = {
-    font_ui_18b_bitmap, font_ui_18b_glyphs, font_ui_18b_ranges,
+    font_ui_18b_bitmap, font_ui_18b_glyphs, font_ui_11_ranges,
     22, 18, 5, 23
 };
 

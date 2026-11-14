@@ -32,5 +32,7 @@ void cons_bloque_corrupto(uint8_t si);
 void cons_captura_tramas(uint32_t tramas); /* cuantas tramas copia el I2S */
 void cons_paso_ciclos(uint32_t c);         /* cuanto avanza DWT por bloque */
 const int16_t *cons_audio(void);           /* la ultima media que se mando */
+void cons_i2s_tramas_media(uint32_t n);    /* 0 = el tapon sigue a la tasa */
+extern uint32_t g_i2s_tramas;              /* las que dijo el que llama */
 
 #endif

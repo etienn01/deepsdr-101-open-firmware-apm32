@@ -247,7 +247,7 @@ void rds_start(float fs_hz)
 
     /* Un simbolo por vuelta del acumulador: el incremento es baudios/Fs. */
     s_sim_fase = 0U;
-    s_sim_inc_nom = (uint32_t)((double)RDS_BAUD / (double)fs_bb * 4294967296.0 + 0.5);
+    s_sim_inc_nom = nco_inc_de((float)RDS_BAUD, fs_bb);
     s_sim_inc = s_sim_inc_nom;
     s_sim_err_int = 0.0f;
     s_acc1 = s_acc2 = 0.0f;
@@ -322,13 +322,34 @@ static char rds_car(uint8_t c)
  */
 static void mjd_a_fecha(uint32_t mjd, uint8_t *dia, uint8_t *mes, uint8_t *anno2)
 {
-    uint32_t yp = (uint32_t)(((double)mjd - 15078.2) / 365.25);
-    uint32_t mp = (uint32_t)((((double)mjd - 14956.1) - (double)((uint32_t)((double)yp * 365.25))) / 30.6001);
+    /*
+     * EN ENTERO DESDE EL 11/11/2026, Y DA EXACTAMENTE LO MISMO.
+     *
+     * La formula del anexo de la norma viene escrita con decimales
+     * -15078,2 / 365,25 / 14956,1 / 30,6001- y estaba copiada tal cual en
+     * double. En este chip la FPU es de precision simple, asi que cada
+     * double lo hacia una rutina por software de libgcc; las que entraban
+     * por esta clase de linea sumaban 3.636 bytes de flash.
+     *
+     * Multiplicando numerador y denominador por 100 y por 10.000 las
+     * mismas divisiones salen en entero sin un solo decimal, y los
+     * int(...) de la norma son la division entera de C. El campo de la
+     * trama tiene 17 bits, o sea MJD hasta 131.071, y mjd * 10.000 cabe
+     * de sobra en 32 bits.
+     *
+     * COMPROBADO UNO A UNO, no razonado: las dos versiones se corrieron
+     * en el PC sobre los 115.993 valores con sentido del campo y dan la
+     * misma fecha en todos. No es una conversion "equivalente": es la
+     * misma.
+     */
+    uint32_t yp = (mjd * 100UL - 1507820UL) / 36525UL;
+    uint32_t ay = (yp * 36525UL) / 100UL;            /* int(yp * 365,25) */
+    uint32_t mp = ((mjd * 10000UL - 149561000UL) - ay * 10000UL) / 306001UL;
+    uint32_t am = (mp * 306001UL) / 10000UL;         /* int(mp * 30,6001) */
     uint32_t k;
     uint32_t d, m, y;
 
-    d = mjd - 14956UL - (uint32_t)((double)yp * 365.25)
-        - (uint32_t)((double)mp * 30.6001);
+    d = mjd - 14956UL - ay - am;
     k = (mp == 14UL || mp == 15UL) ? 1UL : 0UL;
     y = yp + k;
     m = mp - 1UL - k * 12UL;

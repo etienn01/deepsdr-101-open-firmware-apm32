@@ -131,11 +131,28 @@ void bip_mete(int16_t *estereo, uint32_t n, float fs_hz)
             if (s_cola[s_i].hz == 0U) {
                 s_inc = 0U;
             } else {
-                /* El incremento de fase: hz/fs de vuelta por muestra, en la
-                 * rejilla de 2^32. En double, por la misma razon que
-                 * nco_freq(): 2^32 no cabe en los 24 bits de un float. */
-                double f = (double)s_cola[s_i].hz / (double)fs_hz;
-                s_inc = (uint32_t)(f * 4294967296.0 + 0.5);
+                /*
+                 * El incremento de fase: hz/fs de vuelta por muestra, en la
+                 * rejilla de 2^32.
+                 *
+                 * EN ENTERO DE 64 BITS DESDE EL 11/11/2026, Y NO ES SOLO
+                 * POR EL SITIO. Aqui ponia un double "porque 2^32 no cabe
+                 * en los 24 bits de un float", y eso es cierto; lo que no
+                 * se miro es que en ESTE chip la FPU es de precision
+                 * SIMPLE, asi que un double no lo hace la FPU: lo hace una
+                 * rutina por software de libgcc. Las veinticuatro que
+                 * entraban por esta clase de linea sumaban 3.636 bytes de
+                 * flash en una pieza donde quedaban 264 libres.
+                 *
+                 * Y la cuenta en entero no es una aproximacion peor: es
+                 * EXACTA. (hz << 32) / fs es el cociente de verdad
+                 * redondeado, mientras que el double tenia que representar
+                 * 2^32 y multiplicar. Mejor y mas barata.
+                 *
+                 * El + fs/2 antes de dividir es el redondeo al mas
+                 * cercano, que es lo que hacia el "+ 0.5" de antes.
+                 */
+                s_inc = nco_inc_de((float)s_cola[s_i].hz, fs_hz);
             }
             s_fase = 0U;
             s_abierto = 1U;

@@ -17,7 +17,7 @@
 /* Los datos estan en fonts_data.c, no aqui. */
 extern const uint8_t font_num_44_bitmap[9240];
 extern const gfx2_glyph_t font_num_44_glyphs[23];
-extern const gfx2_range_t font_num_44_ranges[10];
+/* Su tabla de rangos se comparte: ver fonts_data.c. */
 extern const gfx2_font_t font_num_44;
 
 #endif /* FONT_NUM_44_H */

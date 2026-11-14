@@ -73,6 +73,7 @@
 #include "nb.h"
 #include "semibanda.h"   /* semibanda_reset() - ver cadena_olvida() */
 #include "dcf77.h"
+#include "hora_rwm.h"
 #include "husos.h"   /* la tabla de ciudades y las reglas de verano */
 #include "hora_comun.h"   /* el huso, la suma de minutos y el dia de la semana */
 #include "ui_hora.h"
@@ -627,6 +628,7 @@ static void hora_sintoniza(void);
 static void barrido_arranca(void);
 static void hora_poll(void);
 static void hora_poll_rds(void);
+static void hora_poll_rwm(void);
 static void hora_touch(uint16_t x, uint16_t y, uint8_t pressed);
 static void qth_touch(uint16_t x, uint16_t y, uint8_t pressed);
 static void qth_mando(int32_t pasos);
@@ -2798,6 +2800,53 @@ int main(void)
      * has to wait until after the two boot-time calls just above. */
     s_settings_ready_for_autosave = 1U;
 
+    /*
+     * ======================================================================
+     * *** Y SI CONFIG.CSV NO EXISTE, SE CREA AQUI MISMO - 11/11/2026. ***
+     * ======================================================================
+     *
+     * EL CASO, contado por el usuario que lo destapo y RESUELTO POR EL: en
+     * su radio los ajustes no se guardaban nunca, y despues de formatear el
+     * fichero no llegaba a aparecer. Se parcheo el firmware por su cuenta
+     * y con esto le funciona. Tiene toda la razon, y el porque es este:
+     *
+     * El fichero solo NACE por el camino bloqueante, y a ese solo se llega
+     * cuando settings_poll() decide que hay algo sucio Y que han pasado los
+     * SETTINGS_SAVE_DEBOUNCE_MS desde la ULTIMA marca. El antirrebote son
+     * treinta segundos desde el 01/11/2026, y se reinicia en cada clic del
+     * mando -apply_lo_tune() marca sucio-. O sea que para que el fichero
+     * naciera hacia falta tocar algo y despues dejar la radio quieta medio
+     * minuto largo antes de apagarla o de entrar en modo disco. Quien no
+     * acierta con esa ventana no tiene CONFIG.CSV, y entonces NADA se
+     * guarda: ni la frecuencia, ni el modo, ni el tactil. Para siempre.
+     *
+     * Antes del 01/11 el antirrebote eran tres segundos y por eso el
+     * fichero aparecia solo: de ahi que el usuario viera que con la V6.25
+     * se creaba y con la V6.58 no. No era el formateo ni el volumen.
+     *
+     * EL ARREGLO NO ES BAJAR EL ANTIRREBOTE. Eso lo probe el 10/11 y hubo
+     * que deshacerlo: un guardado son treinta y dos programaciones de
+     * pagina repartidas por el bucle principal, y a tres segundos se nota.
+     * El arreglo es que el fichero NAZCA, que es otra cosa: una sola vez,
+     * en el arranque, donde no hay cascada que entrecortar todavia y donde
+     * los 176 ms del camino bloqueante no los ve nadie.
+     *
+     * Despues de esto el antirrebote hace lo que tiene que hacer -espaciar
+     * los guardados de un fichero QUE YA EXISTE- y deja de ser, sin
+     * quererlo, la puerta por la que el fichero tenia que entrar.
+     */
+    if (!spi_flash_fichero_hay("CONFIG  ", "CSV")) {
+        settings_extra_t extra;
+
+        debug_print("main: no hay CONFIG.CSV - se crea ahora, en el arranque\n");
+        extras_leer(&extra);
+        settings_save_now(vfo_para_guardar(), modo_para_guardar(),
+                          k_tune_steps[s_tune_step_idx], bw_para_guardar(),
+                          s_volume_db_x2, tasa_guardada(), pga_para_guardar(),
+                          spectrum_smooth_pct_for_save(), s_speaker_pa_enabled,
+                          s_att_suelo, s_tema_idx, &extra);
+    }
+
     debug_print("main: entering the main loop\n");
 
     while (1) {
@@ -4451,6 +4500,17 @@ typedef struct {
      * forma de no recolocar ninguno es esta.
      */
     uint8_t sam_banda;          /* SAM_BANDA_* - solo lo miran las filas de SAM */
+    /*
+     * Y EL DIECIOCHO, TAMBIEN DETRAS - 11/11/2026, por lo mismo que
+     * explica el parrafo de `sam_banda` aqui arriba y que ya se gano su
+     * sitio: puesto al final, los veintinueve renglones que ya existen no
+     * se tocan ni una letra y C les pone cero. El 09/11, al meter `g3ruh`
+     * en medio, hubo que anadir un campo a cada renglon con una expresion
+     * regular y UNO SE QUEDO FUERA -el de AM, que tiene dos espacios donde
+     * los demas tienen uno-; lo canto tools/modos_check.py. Esta vez no
+     * hay nada que recolocar y por tanto nada que recolocar mal.
+     */
+    uint8_t escan;              /* 1 = la fila del escaner de tramo */
 } demod_mode_entry_t;
 
 /*
@@ -4584,6 +4644,22 @@ static const demod_mode_entry_t k_demod_modes[] = {
     { "LSB", T("Banda lateral baja", "Lower sideband"),  DEMOD_MODE_LSB, RTTY_VARIANT_NONE,     0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_ANA },
     { "NFM", T("FM estrecha", "Narrow FM"),         DEMOD_MODE_NFM, RTTY_VARIANT_NONE,     0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_ANA },
     { "WFM", T("FM ancha", "Wide FM"),            DEMOD_MODE_WFM, RTTY_VARIANT_NONE,     0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_ANA },
+    /*
+     * EL ESCANER DE TRAMO - 11/11/2026, pedido por un usuario.
+     *
+     * Va en Analogico y no en una familia propia porque lo que entrega es
+     * SONIDO: se para donde hay alguien y te lo deja escuchar. Ese es el
+     * corte de las familias -ver el comentario de MODO_FAM_ANA-, y una
+     * familia de una sola celda ademas se ve rara.
+     *
+     * La demodulacion de la fila es NFM, que es la que se usa para la
+     * inmensa mayoria de los tramos que se barren -repetidores, marina,
+     * PMR-, PERO NO MANDA: al entrar, el teclado pregunta el tramo y
+     * despues el modo, y el que elijas ahi es el que se usa. Ver
+     * rng_pide_arranca(). Esta aqui porque la tabla exige una y porque es
+     * la que vale si algun dia se entra por otro camino.
+     */
+    { "SCAN", T("Escáner de tramo", "Band scanner"), DEMOD_MODE_NFM, RTTY_VARIANT_NONE, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_ANA, SAM_BANDA_AMBAS, 1U },
     { "CW", T("Telegrafía Morse", "Morse telegraphy"),    DEMOD_MODE_USB, RTTY_VARIANT_NONE,     1U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_DIG }, /* ver el comentario de arriba */
     { "RTTY-L", T("Teletipo en LSB", "Teletype on LSB"),     DEMOD_MODE_LSB, RTTY_VARIANT_NORMAL,   0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_DIG }, /* confirmed correct polarity on LSB, 08/08/2026 */
     { "RTTY-U", T("Teletipo en USB", "Teletype on USB"),     DEMOD_MODE_USB, RTTY_VARIANT_INVERTED, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, MODO_FAM_DIG }, /* USB mirrors LSB - see this block's comment */
@@ -5250,6 +5326,11 @@ static uint8_t s_mem_tap;
  * ui_top_state_t guarda PUNTEROS y no copias. */
 static char s_top_memn[4];
 
+#define BANCO_SCANNER  (BANCO_N - 1U)   /* el cuarto banco se llama Scanner */
+
+static uint8_t  s_rng_on;      /* 1 = lo que corre es el barrido de RANGO */
+static uint32_t s_rng_lo;      /* principio del tramo, Hz. 0 = sin fijar */
+static uint32_t s_rng_hi;      /* final del tramo, Hz */
 /* El barrido: en que banco va y si esta en marcha. */
 static uint8_t s_scan_on;
 static uint8_t s_scan_banco;
@@ -5277,8 +5358,10 @@ static uint32_t s_scan_oida_ms;
  * banco_cat_nombre() aqui abajo- y entonces manda el tuyo.
  *
  * LOS ANCHOS ESTAN MEDIDOS, no supuestos, porque la columna no recorta
- * (ver banco_nombres_recorta()). El peor de los ocho textos es
- * "Repetidores" con 117 px de los 138 que hay. Lo vigila
+ * (ver banco_nombres_recorta()). El peor de los ocho textos era
+ * "Repetidores" con 117 px de los 138 que hay; desde el 11/11/2026 ese
+ * banco se llama "Scanner" -ver el barrido de rango- y el peor caso pasa a
+ * ser otro, mas corto. Lo vigila
  * sim/banco_pant.c con la fuente de verdad, asi que el dia que uno crezca
  * -o se traduzca a algo mas largo- sale en rojo y no encima de la celda
  * de al lado.
@@ -5287,7 +5370,7 @@ static const texto_t k_banco_nombres[BANCO_N] = {
     { "HF",          "HF" },
     { "Aviones",     "Aircraft" },
     { "Marina",      "Marine" },
-    { "Repetidores", "Repeaters" },
+    { "Scanner",     "Scanner" },
 };
 
 /*
@@ -7568,6 +7651,16 @@ static uint8_t demod_mode_entry_active(uint8_t i)
                      k_demod_modes[i].ident == ident_modo_activo() &&
                      k_demod_modes[i].psk31 == psk31_activo() &&
                      k_demod_modes[i].hell == hell_activo() &&
+                     /*
+                      * EL ESCANER DE TRAMO, 11/11/2026. Sin esta linea la
+                      * fila SCAN es indistinguible de la de NFM a secas
+                      * -mismo demodulador y los demas interruptores a
+                      * cero-, asi que mientras barre la rejilla marcaria
+                      * NFM y la cabecera diria NFM. Lo canto
+                      * tools/panel_check.py en cuanto se anadio el campo,
+                      * que para eso compara la estructura con esta funcion.
+                      */
+                     k_demod_modes[i].escan == (uint8_t)(s_scan_on && s_rng_on) &&
                      k_demod_modes[i].dsc  == dsc_activo());
 }
 
@@ -13655,6 +13748,28 @@ static char        s_hora_fecha[16];  /* "15/06/26" */
  * recorte: una palabra mas en esa frase y se sale. Con el aserto detras, el
  * que la alargue se entera al compilar.
  */
+/*
+ * LA TABLA DE DIGITOS HEXADECIMALES, UNA SOLA VEZ - 13/11/2026.
+ *
+ * Estaba cuatro veces en este fichero, como `static const` dentro de cuatro
+ * funciones distintas. GCC no las junta -son objetos distintos en ambitos
+ * distintos- asi que iban cuatro veces a la flash.
+ *
+ * *** Y LO QUE SE AHORRA NO ES LO QUE PARECE: 8 BYTES, NO 51. *** Las tres
+ * copias de mas eran 51 bytes de constantes, pero al pasar a un simbolo de
+ * FICHERO las cuatro funciones que la usan necesitan un puntero en su pool
+ * de literales -cuatro bytes cada una- en vez de alcanzarla con un
+ * desplazamiento relativo al programa. Medido en el .elf: .rodata baja 51 y
+ * .text sube 43. Se deja porque ocho bytes son ocho y una tabla se mantiene
+ * mejor que cuatro, pero que nadie vuelva a intentarlo esperando 51.
+ *
+ * Por lo mismo NO se saca a un modulo compartido: habria que crear un
+ * fichero nuevo y darle una dependencia mas a cinco modulos para un ahorro
+ * que el pool de literales se come. Las que quedan en hfdl_modo.c,
+ * hfdl_aircraft.c, icao24_db.c y rds_pi.c se quedan donde estan por eso.
+ */
+static const char k_hexd[] = "0123456789ABCDEF";
+
 static char        s_hora_det[88];
 /* El renglon que dice a que apunta el mando con el RDS puesto. Buffer
  * propio y no s_hora_det: ese lo escriben las otras ramas de
@@ -14216,14 +14331,13 @@ static void hora_poll_rds(void)
          * copiandola de ningun sitio.
          */
         if (in.tiene_pi && !rds_pi_nombre(in.pi)) {
-            static const char hx[] = "0123456789ABCDEF";
             p = s_hora_det;
             p = hora_rot(p, tr("codigo", "code"));
             *p++ = ' ';
-            *p++ = hx[(in.pi >> 12) & 0xFU];
-            *p++ = hx[(in.pi >> 8) & 0xFU];
-            *p++ = hx[(in.pi >> 4) & 0xFU];
-            *p++ = hx[in.pi & 0xFU];
+            *p++ = k_hexd[(in.pi >> 12) & 0xFU];
+            *p++ = k_hexd[(in.pi >> 8) & 0xFU];
+            *p++ = k_hexd[(in.pi >> 4) & 0xFU];
+            *p++ = k_hexd[in.pi & 0xFU];
             *p++ = ' '; *p++ = '-'; *p++ = ' ';
             {
                 const char *t = tr("la hora se manda una vez por minuto",
@@ -14372,6 +14486,129 @@ static void hora_poll_rds(void)
 
 /* Refresca la pantalla. Se llama desde el bucle principal, no desde la
  * interrupcion: aqui no hay nada que dependa de llegar a tiempo. */
+/*
+ * ======================================================================
+ * LA PANTALLA DE LA HORA CON RWM - 13/11/2026
+ * ======================================================================
+ *
+ * Pedido por el dueño del proyecto. Y lo primero que hay que decir, porque
+ * decide lo que esta pantalla puede enseñar: *** RWM NO MANDA LA HORA DEL
+ * DIA. *** Lo dice su norma y lo confirma el programa de PC del usuario que
+ * la propuso, que no descifra ninguna hora: coge el borde de minuto, le
+ * encaja la fase del reloj que YA TIENE el ordenador, y si el error pasa de
+ * treinta segundos se rinde y manda a NTP.
+ *
+ * Asi que aqui no hay hh:mm que enseñar ni fecha que escribir. Lo que hay es
+ * un BORDE DE MINUTO medido con mucha precision, y con el se ancla el minuto
+ * y el segundo conservando la hora y la fecha que ya tengas. Eso es lo que
+ * el dueño acepto -que sirviera solo para los minutos- y es lo que la
+ * pantalla promete, ni una palabra mas.
+ *
+ * El renglon de la hora enseña EL RELOJ DE LA RADIO con sus segundos, no una
+ * hora recibida que no existe. Es lo mismo que hace la rama del RDS cuando
+ * ya esta anclada, y por la misma razon: lo que interesa ver es si NUESTRO
+ * reloj va bien, y para eso hay que poder ponerlo al lado de otro.
+ */
+static void hora_poll_rwm(void)
+{
+    rwm_info_t in;
+    char *p;
+
+    rwm_info(&in);
+
+    s_hora.nivel   = in.nivel;
+    s_hora.emisora = dcf77_nombre(s_hora_emisora);
+    s_hora.fecha   = 0;          /* RWM no manda fecha. Ver arriba. */
+
+    /* La barra de "marca": aqui no hay contraste de marca de segundo que
+     * medir, asi que dice lo unico que importa de esta emisora: si el compas
+     * esta cogido. */
+    {
+        const uint8_t tren = (uint8_t)(in.estado == (uint8_t)RWM_1HZ
+                                       || in.estado == (uint8_t)RWM_10HZ);
+        s_hora.marca  = (uint8_t)(tren ? 100U : 0U);
+        s_hora.latido = tren;
+    }
+
+    /*
+     * EL BORDE TIENE QUE SER RECIENTE. Uno de hace tres minutos no sirve
+     * para anclar: el reloj de la radio ha seguido corriendo y el atraso que
+     * se restaria seria enorme. Noventa segundos deja pasar el minuto entero
+     * mas el margen de que el siguiente llegue.
+     */
+    {
+        const uint8_t fresco = (uint8_t)(in.marca_hay
+                                         && in.marca_hace_ms < 90000UL);
+
+        s_hora.puede_aplicar = fresco;
+
+        switch (in.estado) {
+        case (uint8_t)RWM_1HZ:
+            s_hora.estado = tr("Tren de 1 Hz", "1 Hz pulse train");
+            break;
+        case (uint8_t)RWM_10HZ:
+            s_hora.estado = tr("Tren de 10 Hz", "10 Hz pulse train");
+            break;
+        case (uint8_t)RWM_MORSE:
+            s_hora.estado = tr("Manipulación irregular", "Irregular keying");
+            break;
+        case (uint8_t)RWM_CALLADO:
+            s_hora.estado = tr("Sin pulsos", "No pulses");
+            break;
+        default:
+            s_hora.estado = tr("Buscando RWM", "Searching for RWM");
+            break;
+        }
+
+        /*
+         * EL DETALLE DICE LO QUE ESTA EMISORA NO DA, y eso no es un adorno:
+         * quien venga de DCF77 espera ver una fecha y un hh:mm aparecer
+         * solos, y aqui no van a aparecer nunca. Decirlo evita que parezca
+         * que no funciona.
+         */
+        if (!fresco) {
+            s_hora.detalle = tr("sólo manda el borde de minuto, de :10 a :30",
+                                "only sends the minute edge, :10 to :30");
+        } else {
+            s_hora.detalle = tr("pulsa Aplicar: pone minuto y segundo, no la hora",
+                                "press Apply: sets minute and second, not the hour");
+        }
+    }
+
+    /* El reloj de la radio, con segundos. Ver la cabecera. */
+    {
+        uint32_t ms = reloj_ahora_ms();
+
+        p = s_hora_txt;
+        p = hora_u2(p, (uint8_t)(ms / 3600000UL)); *p++ = ':';
+        p = hora_u2(p, (uint8_t)((ms / 60000UL) % 60UL)); *p++ = ':';
+        p = hora_u2(p, (uint8_t)((ms / 1000UL) % 60UL)); *p = '\0';
+        s_hora.hora = s_hora_txt;
+    }
+
+    /*
+     * Y EL DUT1 EN EL DETALLE CUANDO SE HA MEDIDO. Es el unico dato que esta
+     * emisora da y ninguna otra de la radio: UT1 - UTC, o sea cuanto se ha
+     * desviado la rotacion de la Tierra del tiempo atomico. No sirve para
+     * poner el reloj y por eso va detras de todo, pero es lo que un
+     * aficionado a esto viene a ver.
+     */
+    if (in.dut1 != RWM_DUT_SIN_MEDIR) {
+        int32_t d = (int32_t)in.dut1 * 100 + (int32_t)
+                    ((in.ddut1 != RWM_DUT_SIN_MEDIR) ? in.ddut1 * 20 : 0);
+        uint32_t a = (uint32_t)((d < 0) ? -d : d);
+
+        p = s_hora_det;
+        p = hora_rot(p, "DUT1");
+        *p++ = ' ';
+        *p++ = (d < 0) ? '-' : '+';
+        *p++ = '0'; *p++ = ',';
+        p = hora_u2(p, (uint8_t)((a / 10U) % 100U));
+        *p++ = ' '; *p++ = 's'; *p = '\0';
+        s_hora.detalle = s_hora_det;
+    }
+}
+
 static void hora_poll(void)
 {
     dcf_info_t inf;
@@ -14409,6 +14646,16 @@ static void hora_poll(void)
      * misma estructura de pantalla. Ver hora_poll_rds(). */
     if (s_hora_emisora == HORA_RDS) {
         hora_poll_rds();
+        return;
+    }
+    /*
+     * Y RWM tampoco, por otro motivo: SI pasa por dcf77.c -se sintoniza y se
+     * lee de la envolvente como las seis, y dcf77_feed() le reparte el
+     * audio- pero lo que manda NO es una trama con hh:mm, asi que
+     * dcf77_info() no tiene nada que contar de el. Ver hora_rwm.h.
+     */
+    if (hora_es_rwm(s_hora_emisora)) {
+        hora_poll_rwm();
         return;
     }
 
@@ -14769,7 +15016,58 @@ static void hora_touch(uint16_t x, uint16_t y, uint8_t pressed)
         } else if (k == UIH_HIT_SALIR) {
             hora_cerrar();
         } else if (k == UIH_HIT_APLICAR) {
-            if (s_hora_emisora == HORA_RDS) {
+            if (hora_es_rwm(s_hora_emisora)) {
+                /*
+                 * ==========================================
+                 * APLICAR CON RWM: EL MINUTO Y EL SEGUNDO
+                 * ==========================================
+                 *
+                 * RWM no manda la hora del dia -ver hora_rwm.h-, asi que
+                 * aqui no hay hh:mm que escribir. Lo que hay es un BORDE DE
+                 * MINUTO, y con el se arregla lo que un reloj de cuarzo
+                 * estropea: el minuto y el segundo.
+                 *
+                 * LA CUENTA, que es la misma que hace el programa de PC de
+                 * referencia: se mira que marcaba NUESTRO reloj en el
+                 * instante del borde -la hora de ahora menos lo que hace- y
+                 * se redondea al minuto mas cercano. Ese es el minuto de
+                 * verdad, porque el borde de RWM cae en un minuto exacto por
+                 * definicion.
+                 *
+                 * *** Y DE AHI SALE EL MARGEN DE CAPTURA: +/-30 SEGUNDOS. ***
+                 * Redondear al minuto mas cercano acierta si el reloj estaba
+                 * dentro de medio minuto, y se equivoca en un minuto entero
+                 * si no. No hay forma de saberlo desde la señal -esta
+                 * emisora no dice en que minuto esta-, asi que no se finge
+                 * que la haya: lo dice la pantalla y lo decide el usuario.
+                 * El programa de referencia hace lo mismo y, pasados los 30
+                 * segundos, manda a NTP. La radio no tiene NTP: tiene el
+                 * teclado.
+                 *
+                 * La hora y la FECHA no se tocan. Por eso aqui no hay
+                 * rtc_pon_fecha_hora() y el guion tools/hora_aplica_check.py
+                 * lo da por bueno: una rama que no escribe fecha no puede
+                 * deshacer el anclaje.
+                 */
+                uint32_t atr = rwm_atraso_ms();
+                rwm_info_t in;
+
+                rwm_info(&in);
+                if (in.marca_hay && atr < 90000UL) {
+                    uint32_t ahora = reloj_ahora_ms();
+                    int32_t  en_marca = (int32_t)ahora - (int32_t)atr;
+                    int32_t  min;
+
+                    /* La vuelta por medianoche: el borde pudo caer ayer. */
+                    while (en_marca < 0) { en_marca += 86400000; }
+                    /* Al minuto mas cercano: +30 s y division entera. */
+                    min = (en_marca + 30000) / 60000;
+                    while (min >= 1440) { min -= 1440; }
+
+                    reloj_anclar((int16_t)min, atr);
+                    debug_print_dec("rwm: minuto anclado, atraso (ms)", atr);
+                }
+            } else if (s_hora_emisora == HORA_RDS) {
                 /* Con el RDS el reloj ya se ha puesto solo en cuanto la hora
                  * quedo confirmada; el boton esta para cerrar dandola por
                  * buena, igual que en las otras. */
@@ -14794,18 +15092,41 @@ static void hora_touch(uint16_t x, uint16_t y, uint8_t pressed)
                      */
                     hora_huso_mide((int16_t)in.desp_medias * 30);
 
-                    /* Anclando, no poniendo el minuto a secas: con
-                     * reloj_poner() este boton DESHARIA el anclaje que ya
-                     * hizo rds_poll(), y el reloj perderia el segundo justo
-                     * al confirmarlo. */
-                    reloj_anclar((int16_t)(in.hora * 60 + in.minuto
-                                           + (int16_t)in.desp_medias * 30),
-                                 rds_hora_atraso_ms());
-                    /* Y LA FECHA, que el grupo 4A trae en dia juliano
-                     * modificado y rds.c ya tiene descifrada. Ojo: la del
-                     * RDS es la de UTC, asi que hay que llevarla al huso
-                     * local antes de escribirla, o a las 00:30 locales se
-                     * guardaria la fecha de ayer. */
+                    /*
+                     * ==============================================
+                     * Y LA FECHA VA DELANTE DEL ANCLAJE - 13/11/2026.
+                     * ==============================================
+                     *
+                     * *** Avisado por el mismo probador que caz el
+                     * fallo de los segundos en ALS162: en RDS la hora se
+                     * ensena con segundos, pero al pulsar Aplicar el reloj
+                     * se quedaba con el HH:MM anterior. ***
+                     *
+                     * Y era eso, por el ORDEN. reloj_anclar() no es solo
+                     * una cuenta: termina escribiendo el RTC CON SU
+                     * SEGUNDO -ver su propio comentario-, y reloj_ahora_ms()
+                     * lee del RTC. Asi que esto estaba anclando bien y
+                     * acto seguido machacando el RTC con
+                     * rtc_pon_fecha_hora(..., 0U), que escribe la hora
+                     * ENTERA con los segundos a cero y con el minuto del
+                     * borde anterior. El anclaje duraba tres lineas.
+                     *
+                     * La rama de las cinco emisoras horarias, ocho lineas
+                     * mas abajo, lo hace en el orden bueno desde el
+                     * 29/10/2026 y lo lleva escrito: "EL ORDEN IMPORTA: la
+                     * fecha PRIMERO... si fuera detras desharia el
+                     * anclaje". Aquel comentario ademas afirmaba que esta
+                     * rama ya tenia ese cuidado. No lo tenia.
+                     *
+                     * Lo vigila ahora tools/hora_aplica_check.py, que
+                     * exige este orden en las dos ramas.
+                     *
+                     * La fecha del RDS es la de UTC -el grupo 4A la trae en
+                     * dia juliano modificado y rds.c ya la tiene
+                     * descifrada-, asi que hay que llevarla al huso local
+                     * antes de escribirla, o a las 00:30 locales se
+                     * guardaria la de ayer.
+                     */
                     if (in.dia != 0U && in.mes != 0U) {
                         uint8_t hh = in.hora, mi = in.minuto;
                         uint8_t dd = in.dia, mo = in.mes, aa = in.anno2;
@@ -14815,6 +15136,14 @@ static void hora_touch(uint16_t x, uint16_t y, uint8_t pressed)
                                           &hh, &mi, &dd, &mo, &aa, &ds);
                         rtc_pon_fecha_hora(dd, mo, aa, hh, mi, 0U);
                     }
+
+                    /* Anclando, no poniendo el minuto a secas: con
+                     * reloj_poner() este boton DESHARIA el anclaje que ya
+                     * hizo rds_poll(), y el reloj perderia el segundo justo
+                     * al confirmarlo. Y VA EL ULTIMO, ver arriba. */
+                    reloj_anclar((int16_t)(in.hora * 60 + in.minuto
+                                           + (int16_t)in.desp_medias * 30),
+                                 rds_hora_atraso_ms());
                     debug_print("rds: hora, fecha y huso aplicados\n");
                 }
             } else {
@@ -16047,6 +16376,31 @@ static const char *modo_base_nombre(uint8_t k)
     return "";
 }
 
+/*
+ * Una frecuencia en megahercios con tres decimales, para la celda del
+ * barrido de rango. Devuelve cuantos caracteres ha escrito, sin el cero
+ * final. Sin sprintf, como el resto del fichero.
+ *
+ * Tres decimales son kilohercios justos, que es la resolucion con la que
+ * se escriben estos tramos; y el tope de la radio son 180 MHz, o sea tres
+ * cifras enteras como mucho: siete caracteres en el peor caso.
+ */
+static uint8_t rng_pon_mhz(char *d, uint32_t hz)
+{
+    uint32_t mhz = hz / 1000000UL;
+    uint32_t khz = (hz / 1000UL) % 1000UL;
+    uint8_t  j = 0U;
+
+    if (mhz >= 100UL) { d[j++] = (char)('0' + (mhz / 100UL) % 10UL); }
+    if (mhz >= 10UL)  { d[j++] = (char)('0' + (mhz / 10UL) % 10UL); }
+    d[j++] = (char)('0' + mhz % 10UL);
+    d[j++] = ',';
+    d[j++] = (char)('0' + (khz / 100UL) % 10UL);
+    d[j++] = (char)('0' + (khz / 10UL) % 10UL);
+    d[j++] = (char)('0' + khz % 10UL);
+    return j;
+}
+
 static void cfg_fill(void)
 {
     uint8_t i, n = 0, cats = cfg_cats();
@@ -16128,6 +16482,30 @@ static void cfg_fill(void)
                                          ? tr("escuchando", "listening")
                                          : tr("barriendo", "scanning"));
                 s_cfg.cel[n].extra  = "";
+                /*
+                 * Y EN EL BANCO SCANNER, EL TRAMO PUESTO - 11/11/2026.
+                 *
+                 * Quieto, esa celda decia "tocar para empezar" y nada
+                 * mas, y en este banco eso no basta: lo que se va a
+                 * barrer no esta en ninguna otra parte de la pantalla.
+                 * Sin el tramo delante, el unico modo de saber que hay
+                 * cargado es arrancarlo y mirar por donde va el dial.
+                 *
+                 * Sale en megahercios con tres decimales, que es como se
+                 * escriben estos tramos -145,000-146,000- y como los
+                 * tecleaste. Quince caracteres de los veinte que tiene
+                 * s_cfg_val[n].
+                 */
+                if (bk == (uint8_t)BANCO_SCANNER && s_rng_lo != 0UL
+                    && s_rng_hi > s_rng_lo && !s_scan_on) {
+                    uint8_t j = 0U;
+
+                    j += rng_pon_mhz(&s_cfg_val[n][j], s_rng_lo);
+                    s_cfg_val[n][j++] = '-';
+                    j += rng_pon_mhz(&s_cfg_val[n][j], s_rng_hi);
+                    s_cfg_val[n][j]   = '\0';
+                    s_cfg.cel[n].valor = s_cfg_val[n];
+                }
                 if (s_scan_on && s_scan_banco == bk) { s_cfg.marcada = n; }
             } else {
                 /*
@@ -17830,9 +18208,8 @@ static uint8_t info_mb(char *b, uint8_t i, uint32_t bytes)
 
 static uint8_t info_hex32(char *b, uint8_t i, uint32_t v)
 {
-    static const char k_h[] = "0123456789ABCDEF";
     int8_t k;
-    for (k = 7; k >= 0; k--) { b[i++] = k_h[(v >> (k * 4)) & 0xFU]; }
+    for (k = 7; k >= 0; k--) { b[i++] = k_hexd[(v >> (k * 4)) & 0xFU]; }
     return i;
 }
 
@@ -18884,7 +19261,6 @@ static const char *info_valor(uint8_t id, char *buf, char *pie)
          * no conocemos seria peor que no decir nada.
          */
         {
-            static const char k_h[] = "0123456789ABCDEF";
             char     hex[12];
             uint8_t  j = 0U, k, n = 0U;
 
@@ -18893,8 +19269,8 @@ static const char *info_valor(uint8_t id, char *buf, char *pie)
              * INFO_PIE_MAX. Lo vigila tools/pie_check.py. */
             for (k = 0U; k < 3U; k++) {
                 if (k != 0U) { hex[n++] = ' '; }
-                hex[n++] = k_h[(a->jedec[k] >> 4) & 0x0FU];
-                hex[n++] = k_h[a->jedec[k] & 0x0FU];
+                hex[n++] = k_hexd[(a->jedec[k] >> 4) & 0x0FU];
+                hex[n++] = k_hexd[a->jedec[k] & 0x0FU];
             }
             hex[n] = '\0';
             j = pie_txt(pie, j, hex);
@@ -18946,14 +19322,13 @@ static const char *info_valor(uint8_t id, char *buf, char *pie)
          * los ocho bytes enteros y sin separadores.
          */
         uint8_t id[8], i, k;
-        static const char k_h[] = "0123456789ABCDEF";
 
         if (!spi_flash_unique_id(id)) {
             return tr("el chip no lo dice", "chip does not say");
         }
         for (i = 0U, k = 0U; i < 8U; i++) {
-            buf[k++] = k_h[(id[i] >> 4) & 0xFU];
-            buf[k++] = k_h[id[i] & 0xFU];
+            buf[k++] = k_hexd[(id[i] >> 4) & 0xFU];
+            buf[k++] = k_hexd[id[i] & 0xFU];
         }
         buf[k] = '\0';
         return buf;
@@ -22545,6 +22920,67 @@ static void mem_graba(uint8_t bk, uint8_t c)
 #define SCAN_MARGEN_DB     10.0f  /* cuanto tiene que sobresalir del suelo */
 #define SCAN_WFM_RUIDO_DB  60.0f  /* por debajo de esto, hay emisora */
 #define SCAN_PISO_SUBE_DB   0.5f  /* lo que el suelo puede subir por visita */
+/*
+ * LO QUE SE QUEDA EN UNA EMISORA EL BARRIDO DE TRAMO - 11/11/2026, dicho
+ * por el dueno con la radio delante.
+ *
+ * El barrido de MEMORIAS se queda mientras se oiga algo y sigue cuando el
+ * canal lleva SCAN_VUELVE_MS callado DE SEGUIDO. Eso esta bien para
+ * quince canales que conoces: lo que quieres es escuchar la conversacion
+ * entera.
+ *
+ * Un tramo no. Un tramo son doscientos puntos y lo que se quiere es saber
+ * QUE HAY, no escucharlo: con la regla de las memorias, una portadora
+ * permanente -un repetidor en reposo, una baliza- para el barrido para
+ * siempre y el resto del tramo no se mira nunca. Asi que aqui se para un
+ * rato fijo, suena el pip, se apunta y se sigue.
+ *
+ * Tres segundos son para enterarte de que hay alguien y oir un cacho; lo
+ * que quieras escuchar de verdad ya esta apuntado en el banco y se vuelve
+ * con un toque.
+ */
+#define SCAN_RNG_PARADA_MS 3000UL  /* lo que el barrido de tramo se queda */
+/*
+ * ======================================================================
+ * Y EL TRAMO VA MAS DEPRISA QUE EL BANCO - 11/11/2026, "el scanner es
+ * muy lento", dicho por el dueno con la radio delante. Y lo era.
+ * ======================================================================
+ *
+ * LA CUENTA QUE LO DICE. Un tramo de 1 MHz a 5 kHz son 200 puntos. Con
+ * los tiempos del banco -150 de asentamiento mas 250 de mirar- son 400 ms
+ * por punto: OCHENTA SEGUNDOS por vuelta. Para una banda eso no es un
+ * barrido, es una espera.
+ *
+ * POR QUE LOS DEL BANCO NO VALEN AQUI. Los 250 ms de mirar estan medidos
+ * y son correctos PARA SU TRABAJO: cazar a alguien HABLANDO las
+ * veinticuatro veces de veinticuatro, con quince canales que ya conoces y
+ * una vuelta de seis segundos. Un tramo busca otra cosa -si hay alguien
+ * ahi, no entender lo que dice- y vuelve a pasar por el mismo punto cada
+ * pocos segundos, asi que no necesita acertar a la primera.
+ *
+ * LO QUE SI HAY QUE PAGAR, y esto esta MEDIDO y no elegido: lo que tarda
+ * la lectura del nivel en asentarse despues de un salto. Con el estimador
+ * CORRIENDO -que es como esta en un barrido, no reiniciado- y un escalon
+ * de 34 dB, contra la cadena de verdad:
+ *
+ *     AM     dentro de 1 dB del final en    2 ms   (su escalon es chico)
+ *     USB    dentro de 1 dB del final en   93 ms
+ *     NFM    dentro de 1 dB del final en  101 ms
+ *
+ * O sea unos 100 ms en el peor caso. Por debajo de eso no se mide la
+ * frecuencia nueva: se mide el transitorio de la anterior.
+ *
+ * ASI QUE 60 + 60 = 120 ms por punto, y la ventana de mirar cae entre los
+ * 60 y los 120 ms del salto, donde la lectura ya ha hecho el 90 % del
+ * camino. VEINTICUATRO segundos por vuelta en vez de ochenta.
+ *
+ * LO QUE SE PIERDE, dicho claro: una emisora que apenas saque los 10 dB
+ * del suelo puede no dar la cara en una pasada concreta. Se la lleva la
+ * siguiente, que ahora llega en veinticuatro segundos en vez de en
+ * ochenta. Con los numeros del banco pasaria igual y mas tarde.
+ */
+#define SCAN_RNG_ESPERA_MS   60U  /* asentarse tras el salto, en un tramo */
+#define SCAN_RNG_MIRA_MS     60U  /* y lo que se mira: ver la medida de arriba */
 
 /* Lo que se mira en esta memoria: el pico del nivel en AM y laterales, y
  * el MINIMO de ruido en FM ancha. Las dos van durante todo el segundo,
@@ -22556,6 +22992,59 @@ static float   s_scan_valle;
 /* El suelo de CADA memoria, que es lo unico que vale como referencia: ver
  * el comentario de arriba. 9999 = todavia sin visitar. */
 static float   s_scan_piso[BANCO_MEM_N];
+
+/*
+ * ======================================================================
+ * EL BARRIDO DE RANGO - 11/11/2026, pedido por un usuario.
+ * ======================================================================
+ *
+ * Lo que se pidio: fijar un tramo -145,000 a 146,000, por ejemplo-, un
+ * paso, y que la radio lo recorra sola, se pare donde haya alguien y lo
+ * APUNTE, con la cuenta de las veces que ha aparecido.
+ *
+ * POR QUE NO ES UNA MAQUINA NUEVA. Barrer un rango y barrer un banco son
+ * la misma secuencia -asentar, escuchar, decidir, vigilar, seguir- y
+ * cambian en DOS sitios: de donde sale la frecuencia siguiente, y contra
+ * que suelo se compara. Escribir una segunda maquina al lado habria
+ * duplicado los cinco tiempos, el criterio y los dos repintados, y el dia
+ * que uno cambie cambia en una sola de las dos. Asi que la maquina es la
+ * misma y estas dos variables dicen por cual de los dos caminos va.
+ *
+ * EL SUELO, QUE AQUI NO PUEDE SER UNO POR CELDA. Un banco tiene quince
+ * memorias y cada una aprende el suyo (ver s_scan_piso[]); un rango tiene
+ * miles de puntos y no caben. Pero tampoco hace falta: lo que hacia
+ * imposible un suelo unico para un BANCO era que sus memorias pueden
+ * estar en bandas distintas -el ruido cambia mas de veinte decibelios
+ * entre 3 y 28 MHz-, y un rango es por definicion UN trozo de UNA banda,
+ * donde el ruido es el mismo de punto a punto. Asi que aqui un suelo
+ * unico movil es lo correcto, y no un apaño.
+ */
+static float    s_rng_piso;    /* el suelo del tramo, 9999 = sin estrenar */
+/*
+ * LO QUE ESTA PREGUNTANDO EL TECLADO, Y POR QUE ES UNA SOLA VARIABLE.
+ *
+ * Al elegir el modo Escaner se piden TRES cosas seguidas: la frecuencia de
+ * inicio, la final y en que modo escuchar. Son tres pantallas que ya
+ * existen -el teclado de frecuencia dos veces y la rejilla de modos una-,
+ * asi que lo unico que hace falta es acordarse de por cual se va.
+ *
+ * Con tres banderas sueltas habria estados imposibles -pidiendo el final
+ * sin haber pedido el inicio- que alguien tendria que descartar a mano en
+ * cada sitio. Con un numero no existen: o esta en uno, o en dos, o en tres,
+ * o no esta preguntando nada.
+ *
+ * Se pone a cero en cuanto arranca el barrido. Cerrar el menu con la
+ * pregunta a medias no rompe nada: el tramo viejo sigue puesto y el modo
+ * Escaner se puede volver a tocar.
+ *
+ * Eran TRES preguntas hasta el 11/11/2026 -la tercera, en que modo
+ * escuchar-. Se quito con la radio delante: tecleas el final y lo que
+ * esperas es que empiece. Se barre en el modo que ya hay puesto.
+ */
+#define RNG_PIDE_NADA   0U
+#define RNG_PIDE_INICIO 1U
+#define RNG_PIDE_FINAL  2U
+static uint8_t  s_rng_pide;
 
 /*
  * ======================================================================
@@ -22642,15 +23131,25 @@ static uint8_t mem_hay_senal(uint8_t c, uint8_t sube_ok)
     if (demod_am_get_mode() == DEMOD_MODE_WFM) {
         return (uint8_t)(s_scan_pico < SCAN_WFM_RUIDO_DB);
     }
-    if (c >= BANCO_MEM_N) { return 0U; }
+    /*
+     * El suelo sale de un sitio o de otro, pero la cuenta es LA MISMA: con
+     * el rango hay un solo suelo movil y con el banco uno por memoria. Se
+     * coge la direccion y se sigue igual, que es mejor que dos copias de
+     * tres lineas que un dia se separan. Ver s_rng_piso.
+     */
+    {
+        float *piso = s_rng_on ? &s_rng_piso : &s_scan_piso[c];
 
-    /* Baja de golpe y sube a cuentagotas, los dos con el mismo minimo:
-     * el suelo no puede quedar por encima de lo mas callado que se acaba
-     * de oir aqui. */
-    sube = sube_ok ? (s_scan_piso[c] + SCAN_PISO_SUBE_DB) : s_scan_piso[c];
-    s_scan_piso[c] = (s_scan_valle < sube) ? s_scan_valle : sube;
+        if (!s_rng_on && c >= BANCO_MEM_N) { return 0U; }
 
-    return (uint8_t)(s_scan_pico >= (s_scan_piso[c] + SCAN_MARGEN_DB));
+        /* Baja de golpe y sube a cuentagotas, los dos con el mismo minimo:
+         * el suelo no puede quedar por encima de lo mas callado que se acaba
+         * de oir aqui. */
+        sube = sube_ok ? (*piso + SCAN_PISO_SUBE_DB) : *piso;
+        *piso = (s_scan_valle < sube) ? s_scan_valle : sube;
+
+        return (uint8_t)(s_scan_pico >= (*piso + SCAN_MARGEN_DB));
+    }
 }
 
 /*
@@ -22713,12 +23212,34 @@ static void mem_boton_repinta(void)
 
 static void mem_scan_para(void)
 {
+    uint8_t era_rango = s_rng_on;
+
     if (!s_scan_on) { return; }
     s_scan_on      = 0U;
+    s_rng_on       = 0U;
     s_scan_para_en = 0U;
     /* Y se apaga la medida del nivel, que solo existe para esto: ver
      * demod_am_set_nivel_medir(), y por que importa apagarla. */
     demod_am_set_nivel_medir(0U);
+    /*
+     * Y AQUI ES DONDE SE GUARDA MEM.CSV, no en cada hallazgo.
+     *
+     * Escribir el fichero son dos borrados de 4 kB por un bus a patadas,
+     * y un barrido de tramo puede encontrar algo cada pocos segundos: a
+     * cada hallazgo serian parones continuos y desgaste de la flash para
+     * nada, porque hasta que no se para el barrido nadie va a mirar la
+     * lista. Al parar se escribe una vez y ya esta.
+     *
+     * LA RADIO SE QUEDA DONDE ESTE: no se recupera la frecuencia de antes
+     * de entrar en el escaner. Si el barrido se para es porque has tocado
+     * MEM mientras se oia algo, o sea que lo que quieres es quedarte ahi.
+     *
+     * El buffer se lo presta s_gsv_buf, igual que mem_graba(): ver el
+     * contrato en banco.h.
+     */
+    if (era_rango) {
+        (void)banco_guarda((char *)s_gsv_buf, (uint32_t)sizeof s_gsv_buf);
+    }
     mem_boton_repinta();
     mem_rejilla_repinta();
 }
@@ -22734,11 +23255,66 @@ static void mem_scan_para(void)
  * aqui se comprueba igual porque una memoria se puede borrar con el
  * barrido andando.
  */
+/*
+ * EL PASO DEL BARRIDO DE RANGO ES EL DEL MANDO, y no un ajuste aparte.
+ *
+ * Podria haber una fila mas con su propia lista de pasos, pero seria una
+ * lista IGUAL que la del mando, en otro sitio, que hay que mantener al
+ * dia y que el usuario tiene que aprender dos veces. El paso del mando ya
+ * esta elegido, ya se ve en pantalla y ya es el que el usuario usa para
+ * moverse por esa banda: 12,5 kHz en VHF marina, 5 en repetidores, 9 en
+ * onda media. Asi que el barrido usa ese, y cambiarlo es girar el mando
+ * de siempre.
+ */
+static uint32_t rng_paso_hz(void)
+{
+    uint32_t p = k_tune_steps[s_tune_step_idx];
+
+    /* Un paso de 10 Hz sobre un megahercio son cien mil puntos a casi
+     * medio segundo cada uno: catorce horas. No se prohibe -puede ser lo
+     * que alguien quiera para un tramo de dos kilohercios- pero el suelo
+     * de 100 Hz evita el caso absurdo de dejarlo en 10 por descuido. */
+    return (p < 100UL) ? 100UL : p;
+}
+
+/*
+ * Y EL SIGUIENTE PUNTO DEL TRAMO, con vuelta al principio.
+ *
+ * Da la vuelta y NO se para al llegar al final: un barrido que se detiene
+ * solo deja de escuchar sin que nadie se lo haya pedido, y lo que se pidio
+ * es que vigile un tramo. Se para con el boton MEM, como el otro.
+ */
+static void rng_scan_salta(void)
+{
+    uint32_t paso = rng_paso_hz();
+    uint32_t f    = s_tune_hz;
+
+    s_scan_para_en = 0U;
+    if (f < s_rng_lo || f >= s_rng_hi) { f = s_rng_lo; }
+    else                               { f += paso; }
+    if (f > s_rng_hi) { f = s_rng_lo; }
+
+    s_tune_hz = f;
+    /* El modo NO se toca: dentro de un tramo es el que haya puesto el
+     * usuario. Asi que esto es el camino corto -oscilador y numero de la
+     * cabecera- y no mem_recupera(), que ademas rehace filtro y paso. */
+    apply_lo_tune(s_tune_hz);
+    freq_display_draw();
+    /* Sin cambio de modo la cadena no se rehace, y ademas el tramo corre
+     * con sus propios tiempos: ver SCAN_RNG_ESPERA_MS. */
+    scan_ventana(SCAN_RNG_ESPERA_MS);
+    mem_boton_repinta();
+    mem_rejilla_repinta();
+}
+
 static void mem_scan_salta(void)
 {
-    uint8_t sig = banco_siguiente(s_scan_banco, s_scan_mem);
+    uint8_t sig;
     uint8_t rehace;
 
+    if (s_rng_on) { rng_scan_salta(); return; }
+
+    sig = banco_siguiente(s_scan_banco, s_scan_mem);
     if (sig == 0xFFU) { mem_scan_para(); return; }
     s_scan_mem     = sig;
     s_scan_para_en = 0U;
@@ -22759,9 +23335,107 @@ static void mem_scan_salta(void)
     mem_rejilla_repinta();
 }
 
+/*
+ * APUNTAR UN HALLAZGO EN EL BANCO SCANNER - 11/11/2026.
+ *
+ * Se llama UNA vez por emisora encontrada, en el instante en que el
+ * barrido se queda; no mientras vigila, porque entonces una conversacion
+ * de dos minutos contaria doscientas veces y el contador dejaria de
+ * querer decir "cuantas veces ha aparecido".
+ *
+ * LA TOLERANCIA AL BUSCAR es un paso entero, y tiene su motivo: una
+ * emisora ancha responde en dos puntos contiguos del barrido y el tramo
+ * no tiene por que medir un numero entero de pasos, asi que la misma
+ * emisora no cae siempre en el mismo hercio. Comparando con == saldrian
+ * dos celdas para la misma cosa y las quince se llenarian de duplicados
+ * en una tarde. Ver banco_busca_hz().
+ *
+ * CUANDO EL BANCO SE LLENA se pisa la MENOS oida de las que puso el
+ * propio barrido, nunca una grabada a mano: ver banco_menos_oida(). Si no
+ * queda ninguna suya, se deja de apuntar y el barrido sigue escuchando,
+ * que es mejor que parar o que borrarle una memoria al usuario.
+ *
+ * Y NO SE GUARDA EL FICHERO AQUI. Escribir MEM.CSV son dos borrados de
+ * 4 kB por un bus a patadas, y un barrido puede encontrar algo cada pocos
+ * segundos: se guarda al PARAR el barrido, que es cuando el usuario va a
+ * mirar lo que ha salido. Ver mem_scan_para().
+ */
+static void rng_apunta(void)
+{
+    uint32_t hz = s_tune_hz;
+    uint8_t  i;
+
+    i = banco_busca_hz(BANCO_SCANNER, hz, rng_paso_hz());
+    if (i != 0xFFU) { banco_vista(BANCO_SCANNER, i); return; }
+
+    i = banco_libre(BANCO_SCANNER);
+    if (i == 0xFFU) { i = banco_menos_oida(BANCO_SCANNER); }
+    if (i == 0xFFU) { return; }      /* lleno y todo a mano: no se toca nada */
+
+    {
+        banco_mem_t m;
+
+        memset(&m, 0, sizeof m);
+        m.hz     = hz;
+        m.modo   = (uint8_t)demod_am_get_mode();
+        m.paso   = s_tune_step_idx;
+        m.vistas = 1U;
+        (void)banco_graba(BANCO_SCANNER, i, &m);
+    }
+}
+
+/*
+ * ARRANCAR EL BARRIDO DEL TRAMO. Lo llama la celda SCAN del banco
+ * Scanner cuando hay un tramo fijado; sin tramo, ese banco se barre como
+ * los otros tres, por sus memorias.
+ */
+static void rng_scan_conmuta(void)
+{
+    if (s_scan_on && s_rng_on) { mem_scan_para(); return; }
+    if (s_rng_lo == 0UL || s_rng_hi <= s_rng_lo) { bip_error(); return; }
+
+    s_scan_on    = 1U;
+    s_rng_on     = 1U;
+    s_rng_piso   = 9999.0f;          /* cada barrido aprende el suyo */
+    s_scan_banco = (uint8_t)BANCO_SCANNER;
+    s_scan_mem   = 0xFFU;
+    demod_am_set_nivel_medir(1U);
+    /*
+     * EMPIEZA POR EL PRINCIPIO DEL TRAMO, SIEMPRE - 11/11/2026.
+     *
+     * Aqui se llamaba a rng_scan_salta() y ya esta, confiando en que "la
+     * frecuencia de ahora casi siempre cae fuera del tramo". Lo cazo
+     * sim/escaner.c al primer intento: arrancando con el dial puesto
+     * JUSTO en el principio -que es lo que pasa si acabas de teclearlo-,
+     * la frecuencia cae dentro, el salto suma un paso y el primer punto
+     * del tramo no se visita hasta dar la vuelta entera.
+     *
+     * No es grave y se arregla solo al cabo de una vuelta, pero "empieza
+     * por donde le dije" es de las pocas cosas que un escaner tiene que
+     * hacer sin sorpresas. Se pone el dial a mano y se abre la ventana
+     * aqui, que es lo mismo que hace el salto menos el avance.
+     */
+    s_tune_hz      = s_rng_lo;
+    s_scan_para_en = 0U;
+    apply_lo_tune(s_tune_hz);
+    freq_display_draw();
+    scan_ventana(SCAN_RNG_ESPERA_MS);
+    mem_boton_repinta();
+    mem_rejilla_repinta();
+    menu_screen_close();
+}
+
 static void mem_scan_conmuta(uint8_t bk)
 {
     if (s_scan_on && s_scan_banco == bk) { mem_scan_para(); return; }
+    /*
+     * LA CELDA SCAN DEL BANCO SCANNER HACE LO DE SIEMPRE - 11/11/2026,
+     * dicho por el dueno. Aqui hubo un rato en que ese banco, si tenia un
+     * tramo fijado, barria EL TRAMO en vez de sus memorias. Era un atajo
+     * y estaba mal: esa celda barre memorias en los cuatro bancos, y el
+     * tramo se arranca desde su propio modo. Dos cosas distintas con el
+     * mismo boton es como se pierde la cuenta de lo que hace cada cual.
+     */
     if (banco_usadas(bk) == 0U) {
         /* Un banco vacio no se barre, y se dice con el pip de "no ha
          * podido ser" en vez de no hacer nada: un boton que no responde se
@@ -22851,7 +23525,27 @@ static void mem_scan_poll(void)
          * cada vuelta del bucle. Una voz tiene pausas, asi que preguntar
          * una sola vez al final se perderia media emisora. */
         scan_mira();
-        if (t < (uint32_t)(s_scan_espera + SCAN_MIRA_MS)) { return; }
+        /* El tramo mira menos: ver SCAN_RNG_MIRA_MS y la medida del
+         * asentamiento que hay delante. */
+        if (t < (uint32_t)(s_scan_espera
+                           + (s_rng_on ? SCAN_RNG_MIRA_MS : SCAN_MIRA_MS))) {
+            return;
+        }
+    }
+
+    /*
+     * EL TRAMO SE QUEDA UN RATO FIJO Y SIGUE, haya o no haya todavia
+     * alguien hablando. Ver SCAN_RNG_PARADA_MS: con la regla del banco
+     * -seguir cuando el canal lleve callado de seguido- una portadora
+     * permanente para el barrido para siempre.
+     *
+     * Va ANTES de medir a proposito: lo que decida la ventana de ahora ya
+     * no cambia nada, el rato se ha cumplido y toca saltar.
+     */
+    if (s_rng_on && s_scan_para_en
+        && (uint32_t)(g_msticks - s_scan_oida_ms) >= SCAN_RNG_PARADA_MS) {
+        mem_scan_salta();
+        return;
     }
 
     /* Vigilando, el suelo no puede subir: ver mem_hay_senal(). */
@@ -22864,10 +23558,27 @@ static void mem_scan_poll(void)
              * repinta aqui: la rejilla solo se repintaba en los saltos, y
              * quedarse ya no es un salto. */
             s_scan_para_en = 1U;
+            /* Y si lo que corre es el barrido del tramo, aqui es donde se
+             * apunta: una vez por emisora, no una por ventana. Ver
+             * rng_apunta(). */
+            if (s_rng_on) { rng_apunta(); }
+            /* El reloj de la parada empieza AQUI, en el instante de
+             * pararse, y no se vuelve a tocar: ver SCAN_RNG_PARADA_MS y
+             * el comentario de mas abajo. En el banco esta misma variable
+             * se pone al dia en cada ventana y significa otra cosa. */
+            s_scan_oida_ms = g_msticks;
             bip_listo();
             mem_rejilla_repinta();
         }
-        s_scan_oida_ms = g_msticks;
+        /*
+         * En el banco, esto es "la ultima vez que se oyo algo" y se pone
+         * al dia en cada ventana: de ahi sale el hueco entre dos frases.
+         * En el tramo es "CUANDO ME PARE" y NO se toca mas, porque lo que
+         * se cuenta es el rato que lleva parado, no el silencio. Es la
+         * misma variable con dos sentidos, y se dice aqui para que nadie
+         * la ponga al dia en el tramo sin querer.
+         */
+        if (!s_rng_on) { s_scan_oida_ms = g_msticks; }
         /* Y se sigue vigilando el mismo canal: otra ventana aqui mismo,
          * sin espera, que la cadena no se ha movido. */
         scan_ventana(0U);
@@ -23669,6 +24380,26 @@ static void menu_mode_preset_callback(void *widget, ui_event_t event, void *user
     if (event == UI_EVENT_RELEASE && idx < DEMOD_MODE_ENTRY_COUNT) {
         demod_mode_t mode = k_demod_modes[idx].mode;
 
+        /*
+         * LA FILA DEL ESCANER NO APLICA NINGUN MODO: PREGUNTA.
+         *
+         * Lo que viene detras de este `if` cambia el demodulador, apaga
+         * RTTY, CW, NAVTEX y los demas, y cierra el menu. Nada de eso vale
+         * todavia aqui, porque el modo en el que se va a escuchar aun no
+         * se sabe: lo elige el usuario en el tercer paso, y entonces SI se
+         * pasa por todo esto -con la fila que haya elegido- y al salir
+         * arranca el barrido. Ver el final de esta misma funcion.
+         *
+         * Si ya habia un barrido en marcha, volver a tocar la fila lo para,
+         * que es lo que uno espera de tocar dos veces lo mismo.
+         */
+        if (k_demod_modes[idx].escan) {
+            if (s_scan_on && s_rng_on) { mem_scan_para(); return; }
+            s_rng_pide = RNG_PIDE_INICIO;
+            menu_freq_keypad_show();
+            return;
+        }
+
         apply_demod_mode(mode);
         /* Re-tune at the (unchanged) selected frequency so the LO
          * offset behavior matches the NEW mode immediately - same
@@ -24221,6 +24952,7 @@ static void menu_mode_preset_callback(void *widget, ui_event_t event, void *user
         mode_display_draw();
         sam_calib_display_draw(); /* prompt blank/draw right on mode change, not just at the next periodic tick */
         badges_draw(); /* BW badge is mode-dependent, see its comment */
+
         menu_screen_close();
     }
 }
@@ -24370,6 +25102,64 @@ static void menu_freq_keypad_accept_callback(void *widget, ui_event_t event, voi
             hz64 = (uint64_t)TUNE_MIN_HZ;
         } else if (hz64 > (uint64_t)TUNE_MAX_HZ) {
             hz64 = (uint64_t)TUNE_MAX_HZ;
+        }
+
+        /*
+         * ==================================================================
+         * LOS DOS PRIMEROS PASOS DEL ESCANER DE TRAMO - 11/11/2026.
+         * ==================================================================
+         *
+         * El mismo teclado, la misma cuenta y los mismos topes; lo unico
+         * que cambia es DONDE va el numero. Se mete aqui, despues de
+         * recortar a los limites del sintonizador, para que un tramo no
+         * pueda pedir una frecuencia que la radio no alcanza: el barrido se
+         * quedaria dando vueltas contra el tope sin oir nada.
+         *
+         * Y NO SE SINTONIZA NI SE CIERRA EL MENU en estos dos pasos. El
+         * teclado se vuelve a abrir para la siguiente pregunta, que es lo
+         * que hace que se note que son tres pasos de lo mismo y no tres
+         * cosas sueltas.
+         *
+         * EL ORDEN SE ARREGLA SOLO: si el final que tecleas es menor que el
+         * inicio, se cambian de sitio en vez de pitar. Nadie quiere decir
+         * "de 146 a 145" otra cosa que "ese tramo".
+         */
+        if (s_rng_pide == RNG_PIDE_INICIO) {
+            s_rng_lo   = (uint32_t)hz64;
+            s_rng_pide = RNG_PIDE_FINAL;
+            menu_freq_keypad_show();
+            return;
+        }
+        if (s_rng_pide == RNG_PIDE_FINAL) {
+            s_rng_hi = (uint32_t)hz64;
+            if (s_rng_hi < s_rng_lo) {
+                uint32_t t = s_rng_lo; s_rng_lo = s_rng_hi; s_rng_hi = t;
+            }
+            if (s_rng_hi == s_rng_lo) {
+                /* Un tramo de un solo punto no es un tramo. Se vuelve a
+                 * preguntar el final en vez de arrancar algo que no
+                 * barreria nada. */
+                bip_error();
+                menu_freq_keypad_show();
+                return;
+            }
+            /*
+             * Y AQUI ARRANCA, sin preguntar nada mas - 11/11/2026.
+             *
+             * Hasta hoy esto abria la rejilla de modos para preguntar en
+             * cual escuchar, y el barrido salia de elegir uno alli. Con
+             * la radio delante eso no se entiende: tecleas el final y lo
+             * que esperas es que empiece, no otra pantalla. El dueno se
+             * encontro con que tenia que ir a MEM y tocar SCAN.
+             *
+             * Asi que se barre en el modo QUE YA HAY PUESTO, que ademas
+             * es el que acabas de elegir si vienes de la rejilla: entras
+             * en NFM y barre en NFM. Y si quieres otro, lo cambias antes
+             * o durante, que el barrido no lo toca.
+             */
+            s_rng_pide = RNG_PIDE_NADA;
+            rng_scan_conmuta();
+            return;
         }
 
         s_tune_hz = (uint32_t)hz64;
@@ -24858,7 +25648,18 @@ static void kbd_show(kbd_modo_t modo)
         s_freq_entry_value = 0U;
         s_freq_entry_digits = 0U;
         s_freq_entry_point_pos = FREQ_ENTRY_NO_POINT;
-        s_kbd.titulo = tr("Frecuencia", "Frequency");
+        /*
+         * Y DICE CUAL DE LAS TRES - 11/11/2026, avisado por el dueno con
+         * la radio en la mano: el escaner de tramo pide dos frecuencias
+         * seguidas y las dos ponian "Frecuencia". Dos pantallas iguales
+         * para dos cosas distintas es una pantalla que no dice nada: no
+         * hay forma de saber si vas por la primera o por la segunda.
+         */
+        s_kbd.titulo = (s_rng_pide == RNG_PIDE_INICIO)
+                       ? tr("Frecuencia de inicio", "Start frequency")
+                       : ((s_rng_pide == RNG_PIDE_FINAL)
+                          ? tr("Frecuencia final", "End frequency")
+                          : tr("Frecuencia", "Frequency"));
         s_kbd.pista  = tr("teclea y elige la unidad", "type it and pick the unit");
         for (i = 0U; i < UIK_KEYS; i++) {
             s_kbd.tecla[i] = k_kbd_freq_rot[i][idioma()];
@@ -29594,7 +30395,7 @@ static void digi_sync(void)
                 const char *hx = hfdl_modo_linea_bytes(idx);
 
                 s_digi.fila[f++] = hfdl_modo_linea(idx);
-                if (hx[0] != '\0' && f < n) { s_digi.fila[f++] = hx; }
+                if (k_hexd[0] != '\0' && f < n) { s_digi.fila[f++] = hx; }
             }
             hay = f;
         }
@@ -36619,15 +37420,19 @@ static void spec_tap_tune_to_x(uint16_t x)
 
     /* Bin -> Hz. El bin del centro es s_fft_bins/2 (el array va
      * fftshifteado, el VFO en el centro). */
-    off_hz = (int64_t)(((double)bin_snap - (double)(s_fft_bins / 2U))
-                       * (double)full_span_hz / (double)s_fft_bins);
+    /* En entero de 64 bits y no en doble: los tres de la cuenta YA son
+     * enteros -el bin, los bins y el ancho en hercios-, asi que el doble
+     * no aportaba exactitud, solo traia la aritmetica por software de
+     * libgcc. 11/11/2026. */
+    off_hz = ((int64_t)(int32_t)bin_snap - (int64_t)(s_fft_bins / 2U))
+             * (int64_t)full_span_hz / (int64_t)s_fft_bins;
     f = (int64_t)panel_center_hz + off_hz;
 
     if (enganchado && cw_get_enabled()) {
         /* Que el tono salga al pitch elegido en vez de a cero batido, que es
          * inaudible. De que lado lo dice cw_signo_vfo(), que es el mismo que
          * usa cw_tono_mover() - ver su comentario. */
-        int64_t pitch = (int64_t)(cw_get_pitch_hz() + 0.5f);
+        int64_t pitch = (int64_t)(uint32_t)(cw_get_pitch_hz() + 0.5f);
         f += (int64_t)cw_signo_vfo(modo) * pitch;
     }
 
@@ -36708,7 +37513,7 @@ static void spec_drag_tune_apply(uint16_t x, uint16_t prev_x, float *hz_accum)
     }
     *hz_accum -= (float)steps * step_hz;
 
-    f = tune_mueve_pasos((int64_t)s_tune_hz, steps, step_hz);
+    f = tune_mueve_pasos((int64_t)s_tune_hz, steps, (int64_t)(uint32_t)step_hz);
 
     if (f < (int64_t)TUNE_MIN_HZ) { f = (int64_t)TUNE_MIN_HZ; }
     if (f > (int64_t)TUNE_MAX_HZ) { f = (int64_t)TUNE_MAX_HZ; }

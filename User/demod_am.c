@@ -6959,11 +6959,37 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
      * tramas por bloque. Ver semibanda_interpola().
      */
     {
-        uint32_t tramas = (uint32_t)SDR_RX_BLOCK_SAMPLES;
+        /*
+         * Y CUANTAS TRAMAS SON LO DICE EL I2S, NO LA BANDERA - 12/11/2026.
+         *
+         * Aqui se preguntaba por s_rf_doble, que es la copia que este
+         * fichero guarda de los 192 kHz. El I2S tiene la suya, puesta por
+         * gd32_i2s_stream_arm() en el arranque de la tasa. Dos copias de
+         * la misma verdad, deducidas por caminos distintos: mientras
+         * cuadren no pasa nada, y el dia que no cuadren
+         * gd32_i2s_stream_write_half() no copia lo que le traen.
+         *
+         * Y no es hipotetico: ese emparejamiento ya se rompio dos veces
+         * -lo cuenta la cabecera de aquella funcion en gd32_i2s.h- y el
+         * sintoma es de los malos, porque quien llama desde FM ancha
+         * entrega su numero SIN preguntar por esta bandera. O sea que un
+         * descuadre calla AM, banda lateral y FM estrecha y deja FM ancha
+         * sonando, aguanta el cambio de modo, y no se va hasta que
+         * apagas la radio.
+         *
+         * Preguntandoselo al I2S no hay dos copias que puedan discrepar.
+         * Y ademas sale MAS correcto, no solo mas seguro: el audio de
+         * aqui son siempre SDR_RX_BLOCK_SAMPLES muestras, y que haya que
+         * subirlas a medio banda o no depende de la tasa del CONVERTIDOR
+         * -que comparte reloj con la entrada-, que es exactamente lo que
+         * este numero dice. Ver semibanda_interpola().
+         */
+        uint32_t tramas = gd32_i2s_frames_per_half();
 
-        if (s_rf_doble) {
+        if (tramas == (uint32_t)SDR_RX_BLOCK_SAMPLES_WFM) {
             semibanda_interpola(s_audio_out, (uint32_t)SDR_RX_BLOCK_SAMPLES);
-            tramas = (uint32_t)SDR_RX_BLOCK_SAMPLES_WFM;
+        } else {
+            tramas = (uint32_t)SDR_RX_BLOCK_SAMPLES;
         }
         gd32_i2s_stream_write_half(s_audio_out, tramas);
     }

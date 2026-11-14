@@ -1,4 +1,5 @@
 #include "dcf77.h"
+#include "hora_rwm.h"   /* RWM no se descifra aqui: se reparte. Ver dcf77_feed() */
 #include "rapido.h"   /* rapido_atan2: ver dcf77_fase_iq() */
 #include "idioma.h"
 #include "hora_rbu.h"
@@ -506,7 +507,16 @@ static const struct {
      * Ver el comentario de HORA_RDS en dcf77.h: esta fila existe para que la
      * pantalla de hora pueda nombrarlo y listarlo, pero el RDS no pasa por
      * este fichero - lo decodifica User/rds.c. */
-    {        0UL, "RDS - la FM que escuches",   0U, 1U, 0U }
+    {        0UL, "RDS - la FM que escuches",   0U, 1U, 0U },
+    /*
+     * RWM, las tres. Envolvente -es portadora conmutada, A1A- y ocho
+     * muestras por bloque: a 3.000 por segundo un pulso de 20 ms son 60
+     * muestras y el del minuto 1.500, de sobra para medirlos. Ver
+     * hora_rwm.h.
+     */
+    {  4996000UL, "RWM - 4996 kHz, Rusia",       0U, 8U, 0U },
+    {  9996000UL, "RWM - 9996 kHz, Rusia",       0U, 8U, 0U },
+    { 14996000UL, "RWM - 14996 kHz, Rusia",      0U, 8U, 0U }
 };
 _Static_assert((int)(sizeof(k_emisoras) / sizeof(k_emisoras[0])) == (int)HORA_N,
                "k_emisoras[] y hora_emisora_t se han desincronizado");
@@ -597,6 +607,11 @@ void dcf77_start(hora_emisora_t emisora, float fs_hz)
 
     s_emisora = emisora;
     s_fs = (fs_hz > 1.0f) ? fs_hz : 1.0f;
+    /* Y si es RWM, el que se arranca es el suyo. El resto de este cuerpo no
+     * le hace dano -son variables de los otros formatos- pero arrancarlo es
+     * lo que pone su detector a cero, y sin eso llegaria con el suelo y el
+     * pico de la emisora anterior. */
+    if (hora_es_rwm(emisora)) { rwm_init(s_fs); }
     /* exp(-1/(tau*fs)) aproximado por 1 - 1/(tau*fs): con tau de segundos y
      * fs de cientos de Hz el error es despreciable y ahorra una exp(). */
     s_caida = 1.0f - (1.0f / (PICO_CAIDA_S * s_fs));
@@ -1688,9 +1703,23 @@ float dcf77_fase_iq(float i, float q)
          - rapido_atan2(s_rot_s, s_rot_c);
 }
 
+uint8_t hora_es_rwm(hora_emisora_t e)
+{
+    return (uint8_t)(e == HORA_RWM4996 || e == HORA_RWM9996
+                     || e == HORA_RWM14996);
+}
+
 void dcf77_feed(float muestra)
 {
     if (!s_activo) { return; }
+    /*
+     * RWM SE REPARTE, NO SE DESCIFRA AQUI. Es una emisora de esta familia
+     * -se sintoniza, se lee de la envolvente y su fila esta en la tabla de
+     * arriba-, asi que entra por la misma puerta y demod_am.c no se entera
+     * de nada. Pero lo que manda no es una trama con hh:mm: es un borde. Ese
+     * trabajo vive en hora_rwm.c y la pantalla lo lee de alli.
+     */
+    if (hora_es_rwm(s_emisora))      { rwm_feed(muestra); return; }
     if (s_emisora == HORA_RBU)       { rbu_feed(muestra); }
     else if (es_de_fuera(s_emisora)) { wwv_feed(muestra); }
     else if (s_emisora == HORA_ALS162) { feed_fase(muestra); }
@@ -1701,6 +1730,19 @@ void dcf77_feed(float muestra)
 void dcf77_info(dcf_info_t *out)
 {
     if (out == 0) { return; }
+    /*
+     * De RWM no sale hora, asi que esta estructura no tiene nada que
+     * contar: se devuelve vacia y BUSCANDO a proposito. Quien pregunte por
+     * aqui no debe creerse una hora que esta emisora no manda; la pantalla
+     * de la hora tiene su propio camino para RWM, igual que para el RDS.
+     */
+    if (hora_es_rwm(s_emisora)) {
+        uint32_t k;
+        uint8_t *p = (uint8_t *)(void *)out;
+        for (k = 0U; k < sizeof *out; k++) { p[k] = 0U; }
+        out->estado = (uint8_t)DCF_BUSCANDO;
+        return;
+    }
     if (s_emisora == HORA_RBU)       { rbu_info(out); return; }
     if (es_de_fuera(s_emisora))      { wwv_info(out); return; }
     out->estado     = s_estado;

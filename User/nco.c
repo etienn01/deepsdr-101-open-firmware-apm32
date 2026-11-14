@@ -132,32 +132,60 @@ void nco_sen_cos_rad(float rad, float *sen, float *cos_)
 
 void nco_freq(nco_t *o, float hz, float fs_hz)
 {
-    double v;
-
     if (fs_hz <= 0.0f) {
         o->inc = 0U;
         return;
     }
     /*
-     * En double y no en float a proposito. El incremento es hz/fs * 2^32, y
-     * 2^32 tiene 33 bits significativos: un float solo lleva 24, asi que
-     * redondear aqui en float tiraria los nueve ultimos bits del incremento
-     * y dejaria el error de frecuencia en decimas de hercio en vez de en
-     * cienmilesimas. Es una division por muestra... no, es una division por
-     * CAMBIO de frecuencia, que pasa cuando alguien mueve el mando. Gratis.
+     * ==================================================================
+     * EN ENTERO DE 64 BITS, Y ES EXACTO - 11/11/2026.
+     * ==================================================================
+     *
+     * AQUI HABIA UN DOUBLE, y con un motivo bueno: el incremento es
+     * hz/fs * 2^32, 2^32 tiene 33 bits significativos y un float solo
+     * lleva 24, asi que hacerlo en float tira los ultimos bits del
+     * incremento. Eso sigue siendo cierto.
+     *
+     * LO QUE NO SE MIRO es que la FPU de este chip es de precision
+     * SIMPLE: un double no lo hace la FPU, lo hace una rutina por
+     * software de libgcc. Las veinticuatro que entraban por esta clase de
+     * linea -aqui y en otros nueve modulos- sumaban 3.636 bytes de flash.
+     *
+     * Y NO HAY QUE ELEGIR ENTRE SITIO Y EXACTITUD, que es lo que parecia.
+     * En entero de 64 bits sale EXACTO, mas exacto que en double, y de
+     * paso se va el floor():
+     *
+     *   hz se parte en entero y fraccion. La parte entera por 2^32 es un
+     *   desplazamiento, exacto. Y la fraccion por 2^32 TAMBIEN es exacta
+     *   en float: multiplicar por una potencia de dos solo mueve el
+     *   exponente y no toca la mantisa. O sea que `num` es hz * 2^32 sin
+     *   perder un bit.
+     *
+     *   Dividido por fs da el incremento, y quedarse con los 32 bits de
+     *   abajo ES el modulo una vuelta: justo lo que hacia el floor(), sin
+     *   llamar a nadie. Con hz negativa el truncado en complemento a dos
+     *   da la fase que toca, que es lo que ya se queria.
+     *
+     * fs es 48.000, 96.000 o 192.000 y se representa exacta en float, asi
+     * que el (uint32_t) de abajo no redondea nada que importe.
      */
-    v = (double)hz / (double)fs_hz;
-    v = v - floor(v);                      /* a [0,1): lo de fuera no significa nada */
-    o->inc = (uint32_t)(v * 4294967296.0 + 0.5);
+    o->inc = nco_inc_de(hz, fs_hz);
 }
 
 float nco_freq_real(const nco_t *o, float fs_hz)
 {
-    double f = (double)o->inc / 4294967296.0;
-    if (f > 0.5) {
-        f -= 1.0;                          /* por encima de Fs/2 es una frecuencia negativa */
-    }
-    return (float)(f * (double)fs_hz);
+    /*
+     * La vuelta de nco_inc_de(), y en entero por lo mismo que ella. El
+     * incremento se lee CON SIGNO -en complemento a dos, lo que pasa de
+     * Fs/2 es una frecuencia negativa, que es lo que hacia el "f > 0.5"
+     * de antes-, se multiplica por fs en 64 bits y se parte en vuelta
+     * entera y resto. Asi lo unico que redondea es el float de salida.
+     */
+    int64_t num = (int64_t)(int32_t)o->inc * (int64_t)(uint32_t)(fs_hz + 0.5f);
+    int64_t q   = num >> 32;
+    int64_t r   = num - (q << 32);
+
+    return (float)q + (float)r * (1.0f / 4294967296.0f);
 }
 
 void nco_fase_cero(nco_t *o)

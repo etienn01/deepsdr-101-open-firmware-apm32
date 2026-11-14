@@ -169,6 +169,33 @@ static float   s_scan_pico;
 static float   s_scan_valle;
 static float   s_scan_piso[BANCO_MEM_N];
 
+/*
+ * EL BARRIDO DE TRAMO, APAGADO - 11/11/2026.
+ *
+ * Desde el escaner de tramo, la maquina que saca barrido_dump.py tiene
+ * DOS caminos y pregunta por el del rango en tres sitios. Este banco mide
+ * el de MEMORIAS, asi que aqui el otro se deja apagado -s_rng_on a cero y
+ * sin tramo- y las tres funciones son de mentira: si alguna llegara a
+ * llamarse, s_rng_llamado lo delata.
+ *
+ * Quien mide el camino del rango es sim/escaner.c, que ademas enlaza el
+ * banco.c de verdad.
+ */
+#define BANCO_SCANNER  (BANCO_N - 1U)
+static uint8_t  s_rng_on = 0U;
+static uint32_t s_rng_lo = 0UL, s_rng_hi = 0UL;
+static float    s_rng_piso = 9999.0f;
+static unsigned s_rng_llamado = 0u;
+static void rng_scan_salta(void)   { s_rng_llamado++; }
+static void rng_apunta(void)       { s_rng_llamado++; }
+static void rng_scan_conmuta(void) { s_rng_llamado++; }
+
+/* Y el guardado del fichero, que mem_scan_para() solo hace si venia del
+ * tramo: aqui no viene nunca, pero tiene que compilar. */
+static uint8_t s_gsv_buf[64];
+static uint8_t banco_guarda_falso(void) { s_rng_llamado++; return 1U; }
+#define banco_guarda(b, c)  (((void)(b), (void)(c)), banco_guarda_falso())
+
 #include "barrido_maquina.h"
 
 /* ======================================================================
