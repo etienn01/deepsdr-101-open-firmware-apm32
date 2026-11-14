@@ -1830,8 +1830,33 @@ static void tasa_vigila(void)
  * ajuste del usuario, y cambiarle a nadie como sintoniza su radio para
  * arreglarle un pixel es cambiar el problema de sitio.)
  */
+/*
+ * A WALK OR A JUMP - 14/11/2026, seen on the radio: a typed frequency or a band always landed at the edge of the
+ * screen.
+ *
+ * When the new frequency leaves the NCO window, nco_lo_aparcado() parks the oscillator so that the whole window lies
+ * AHEAD, the frequency at the far edge: right for the knob, which keeps going the same way. But every retune went
+ * through it, so a typed frequency, a band, a memory or a CAT command was taken for a step of the knob and landed
+ * 84 kHz from the centre at 192 kHz (34 at 96), at the edge of the screen.
+ *
+ * Only the knob, a drag on the spectrum and the CW tone walk the dial; they say so with apply_lo_tune_paseo().
+ * Everything else is a jump: out of the window, it lands at the classic Fs/4 place, as at power-on. Inside the
+ * window nothing changes either way: the oscillator stays and only the mark moves.
+ */
+static uint8_t s_sintonia_paseo;
+
+__attribute__((noinline))
+static void apply_lo_tune_paseo(uint32_t freq_hz)
+{
+    s_sintonia_paseo = 1U;
+    apply_lo_tune(freq_hz);
+    s_sintonia_paseo = 0U;
+}
+
 static uint32_t lo_para_sintonia(uint32_t freq_hz, uint8_t is_wfm)
 {
+    uint32_t lo, max, dif;
+
     if (is_wfm) {
         return freq_hz;            /* WFM va centrada, sin desplazamiento */
     }
@@ -1840,9 +1865,16 @@ static uint32_t lo_para_sintonia(uint32_t freq_hz, uint8_t is_wfm)
     }
     /* La regla de aparcado vive en User/nco.c para poder medirla en el
      * simulador: es la unica parte de todo esto que se puede equivocar sin
-     * que se oiga. Ver sim/ncotest.c. */
-    return nco_lo_aparcado(freq_hz, s_lo_hz, demod_if_offset_hz(),
-                           NCO_OFF_MIN_HZ, nco_off_max_hz());
+     * que se oiga. Ver sim/ncotest.c. A jump out of the window passes no
+     * oscillator, which is its "first time" rule: the classic place. */
+    lo  = s_lo_hz;
+    max = nco_off_max_hz();
+    dif = (freq_hz > lo) ? (freq_hz - lo) : (lo - freq_hz);
+    if (!s_sintonia_paseo && dif > max) {
+        lo = 0UL;
+    }
+    return nco_lo_aparcado(freq_hz, lo, demod_if_offset_hz(),
+                           NCO_OFF_MIN_HZ, max);
 }
 
 /* Definida mucho mas abajo, junto a los externs del enlazador que usa. Se
@@ -35133,7 +35165,7 @@ static void cw_tono_mover(float delta_hz)
         if (f > (int64_t)TUNE_MAX_HZ) { f = (int64_t)TUNE_MAX_HZ; }
         if ((uint32_t)f != s_tune_hz) {
             s_tune_hz = (uint32_t)f;
-            apply_lo_tune(s_tune_hz);
+            apply_lo_tune_paseo(s_tune_hz);
             freq_display_draw();
         }
     }
@@ -36366,7 +36398,7 @@ static void tune_encoder_poll(void)
             uint32_t t0 = DWT->CYCCNT;
 
             s_tune_hz = (uint32_t)f;
-            apply_lo_tune(s_tune_hz);
+            apply_lo_tune_paseo(s_tune_hz);
             s_man_lot += (DWT->CYCCNT - t0) / (SystemCoreClock / 1000000U);
             changed = 1;
         }
@@ -37024,7 +37056,7 @@ static void spec_drag_tune_apply(uint16_t x, uint16_t prev_x, float *hz_accum)
         uint32_t t_lot = DWT->CYCCNT;
 
         s_tune_hz = (uint32_t)f;
-        apply_lo_tune(s_tune_hz);
+        apply_lo_tune_paseo(s_tune_hz);
         s_dd_lot += (DWT->CYCCNT - t_lot) / (SystemCoreClock / 1000000U);
         s_dd_lot_n++;
         /*
