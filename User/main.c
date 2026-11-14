@@ -39315,8 +39315,26 @@ static void sdr_spectrum_waterfall_tick(void)
      * s_wf_mitad_n a 0 significa "este frame no tiene dos mitades que
      * separar" - es lo que hace que en ZOOM y con el analizador la
      * velocidad se comporte sola como "Rapida", sin un caso aparte. */
-    static float    s_wf_mitad[FFT_BINS_IQ] TCMRAM_BSS;
+    /*
+     * ONE ARRAY FOR TWO THINGS THAT NEVER LIVE AT THE SAME TIME: the half-frame snapshot of "Muy rapida" (mitad)
+     * and the running sum of the slower speeds (sum), 2 kB each. "Muy rapida" never reads the sum; the slower
+     * speeds never read the snapshot, and their sum always restarts with a copy (s_wf_frames == 0) after any
+     * speed change, so what the snapshot left in it is never read either. That only holds if the snapshot is
+     * not taken while a slower speed is accumulating, so it is taken at "Muy rapida" only; s_wf_mitad_ok says
+     * the snapshot data of this frame exists. s_wf_mitad_n is still set at every speed: it is what the
+     * Information window shows.
+     *
+     * One exception, GD32 build only: there an FFT-size change does not restart the slower speeds' sum (see
+     * SDR_RX_PAN_TWO_BLOCKS below), so the first slow row after the FFT grows from 256 to 512 bins in the middle
+     * of a row reads bins 256..511 that nothing wrote since the size changed - stale in the old code too, now
+     * possibly a former snapshot. The bins below 256 are unaffected.
+     */
+    static union {
+        float mitad[FFT_BINS_IQ];   /* "Muy rapida": s_db_sum at the middle of the frame */
+        float sum[FFT_BINS_IQ];     /* the other speeds: the sum of k_wf[].div frames of s_db_frame */
+    } s_wf_buf TCMRAM_BSS;
     static uint32_t s_wf_mitad_n = 0U;
+    static uint8_t  s_wf_mitad_ok TCMRAM_BSS;   /* in the TCM: it fits in the padding before the stack */
     static uint32_t s_next_frame_ms = 0U;
     static uint8_t line[WATERFALL_WIDTH];   /* indices de colormap, no color */
     static uint32_t s_frame_count = 0U;
@@ -39373,6 +39391,7 @@ static void sdr_spectrum_waterfall_tick(void)
                 s_fft_bins       = fft_tam_iq_actual();
                 s_db_count       = 0U;
                 s_wf_mitad_n     = 0U;
+                s_wf_mitad_ok    = 0U;
                 s_zoom_acc_count = 0U;
                 s_db_traza_lista = 0U;
                 s_db_frame_listo = 0U;
@@ -39439,10 +39458,15 @@ static void sdr_spectrum_waterfall_tick(void)
             }
             s_db_count++;
 
-            /* La foto de media tanda: se hace SIEMPRE, cueste lo que cueste
-             * -1 kB de copia por frame- y no solo cuando "Muy rapida" esta
-             * puesta, porque cambiar de velocidad no puede depender de si
-             * el frame en curso decidio ya guardarla.
+            /* The half-frame snapshot. Its moment is marked at every speed
+             * (s_wf_mitad_n, shown in the Information window), but the copy
+             * is only made at "Muy rapida": the other speeds keep their
+             * running sum in the same array (s_wf_buf). It used to be made
+             * at every speed so that switching to "Muy rapida" in the middle
+             * of a frame would still split that frame; now that one frame,
+             * when the switch comes after its middle, pushes its whole-frame
+             * row twice -the same fallback as zoom or a one-FFT frame- and
+             * the next frames are split again.
              *
              * POR TIEMPO, NO POR CUENTA (25/09/2026). Antes se hacia cuando
              * llegaba la FFT numero SPECTRUM_MAX_FFT_PER_FRAME/2, o sea la
@@ -39462,8 +39486,11 @@ static void sdr_spectrum_waterfall_tick(void)
             if ((s_wf_mitad_n == 0U) &&
                 ((int32_t)(g_msticks -
                            (s_next_frame_ms - (SPECTRUM_FRAME_MS / 2U))) >= 0)) {
-                for (bi = 0; bi < s_fft_bins; bi++) {
-                    s_wf_mitad[bi] = s_db_sum[bi];
+                if (k_wf[s_wf_vel].mult == 2U) {
+                    for (bi = 0; bi < s_fft_bins; bi++) {
+                        s_wf_buf.mitad[bi] = s_db_sum[bi];
+                    }
+                    s_wf_mitad_ok = 1U;
                 }
                 s_wf_mitad_n = s_db_count;
             }
@@ -40213,7 +40240,6 @@ static void sdr_spectrum_waterfall_tick(void)
      * border, same x origin as the spectrum trace so columns line up
      * vertically between the two views. */
     {
-        static TCMRAM_BSS float s_wf_sum[FFT_BINS_IQ];
         uint16_t b;
 
         uint16_t nbins = (uint16_t)s_fft_bins;
@@ -40251,7 +40277,7 @@ static void sdr_spectrum_waterfall_tick(void)
          * sale un pelin mas basta y el RITMO es el correcto.
          */
         uint8_t dos = (k_wf[s_wf_vel].mult == 2U) ? 1U : 0U;
-        uint8_t parte = (uint8_t)(dos && (s_wf_mitad_n > 0U)
+        uint8_t parte = (uint8_t)(dos && s_wf_mitad_ok
                                       && (s_db_count > s_wf_mitad_n));
 
         if (dos) {
@@ -40266,7 +40292,7 @@ static void sdr_spectrum_waterfall_tick(void)
              * medidas que repartir. */
             for (x = 0; x < WATERFALL_WIDTH; x++) {
                 uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
-                line[x] = spectrum_colormap_idx(parte ? (s_wf_mitad[bin] * inv_a)
+                line[x] = spectrum_colormap_idx(parte ? (s_wf_buf.mitad[bin] * inv_a)
                                                       : s_db_frame[bin],
                                                 WF_COLOR_FLOOR, esc);
             }
@@ -40278,7 +40304,7 @@ static void sdr_spectrum_waterfall_tick(void)
                 for (x = 0; x < WATERFALL_WIDTH; x++) {
                     uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
                     line[x] = spectrum_colormap_idx(
-                                  (s_db_sum[bin] - s_wf_mitad[bin]) * inv_b,
+                                  (s_db_sum[bin] - s_wf_buf.mitad[bin]) * inv_b,
                                   WF_COLOR_FLOOR, esc);
                 }
             }
@@ -40294,9 +40320,9 @@ static void sdr_spectrum_waterfall_tick(void)
              * velocidad -que pone s_wf_frames a 0- no arrastra lo que
              * hubiera quedado dentro de la velocidad anterior. */
             if (s_wf_frames == 0U) {
-                for (b = 0; b < nbins; b++) { s_wf_sum[b] = s_db_frame[b]; }
+                for (b = 0; b < nbins; b++) { s_wf_buf.sum[b] = s_db_frame[b]; }
             } else {
-                for (b = 0; b < nbins; b++) { s_wf_sum[b] += s_db_frame[b]; }
+                for (b = 0; b < nbins; b++) { s_wf_buf.sum[b] += s_db_frame[b]; }
             }
             s_wf_frames++;
 
@@ -40306,7 +40332,7 @@ static void sdr_spectrum_waterfall_tick(void)
 
                 for (x = 0; x < WATERFALL_WIDTH; x++) {
                     uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
-                    line[x] = spectrum_colormap_idx(s_wf_sum[bin] * inv,
+                    line[x] = spectrum_colormap_idx(s_wf_buf.sum[bin] * inv,
                                                     WF_COLOR_FLOOR, esc);
                 }
                 waterfall_push_line(line); s_wf_lineas++;
@@ -40425,6 +40451,7 @@ static void sdr_spectrum_waterfall_tick(void)
      * se invalida aqui mismo: pertenece al frame que acaba de irse. */
     s_db_count = 0U;
     s_wf_mitad_n = 0U;
+    s_wf_mitad_ok = 0U;
 
     s_frame_count++;
     if (!s_menu_open && (s_frame_count % 30U) == 0U) {
