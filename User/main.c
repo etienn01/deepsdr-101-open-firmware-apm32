@@ -10734,6 +10734,27 @@ static void menu_tile_zoom_callback(void *widget, ui_event_t event, void *user_d
 #define RX_LOCK_WAIT_TIMEOUT_MS 20U
 
 /*
+ * THE SPECTRUM'S RAW I/Q BLOCK, DEFINED ONCE - 14/11/2026.
+ *
+ * s_rx_i/s_rx_q hold the latest raw block, de-interleaved, for the
+ * spectrum: see the comment where it polls them, near the end of the file,
+ * for their size. They used to be written twice, here as a tentative
+ * definition for the APM32 release build - whose rx_capture_looks_corrupted()
+ * below borrows them - and again down there. C merges the two into one
+ * object, and GCC applies a section attribute found on only one of them,
+ * but nothing in the source said so. Now there is exactly one definition,
+ * before the first user, on both builds.
+ *
+ * In the TCM, 2,048 bytes off main SRAM: only the CPU touches them. They
+ * are filled by sdr_rx_poll_block_iq()/sdr_rx_poll_pan_iq(), which copy in
+ * a loop out of the DMA's s_raw_buf and the CCM's s_pan_i/s_pan_q, and read
+ * by fft_compute_db_iq(), the zoom decimators, the level min/max and the
+ * lock check below.
+ */
+static int16_t s_rx_i[SDR_RX_BLOCK_SAMPLES_MAX] TCMRAM_BSS;
+static int16_t s_rx_q[SDR_RX_BLOCK_SAMPLES_MAX] TCMRAM_BSS;
+
+/*
  * DOS KILOBYTES QUE NO LOS USABA NADIE - 07/10/2026.
  *
  * Estos dos buffers y la funcion de abajo son de un diagnostico cuya UNICA
@@ -10751,16 +10772,10 @@ static void menu_tile_zoom_callback(void *widget, ui_event_t event, void *user_d
  * espejo I/Q. La respuesta correcta a eso no era recortar el corrector.
  */
 #if DEBUG_UART_ENABLED || defined(CHIP_APM32F407)   /* the APM32 build uses the check to re-sync, see apply_demod_mode() */
-/* Own buffers, sized like main.c's later s_rx_i/s_rx_q (declared much
- * further down in this file, near the spectrum polling code, so not
- * yet visible up here) - kept separate rather than reordering
- * existing declarations, to keep this change minimal and self-
- * contained. */
+/* Own buffers (debug builds), sized like s_rx_i/s_rx_q above. */
 #if defined(CHIP_APM32F407) && !DEBUG_UART_ENABLED
-/* APM32 release build: borrow the spectrum's I/Q block buffers (tentatively defined here, defined again further
- * down): the check only runs while the RX chain is being restarted, never while the spectrum polls them. */
-static int16_t s_rx_i[SDR_RX_BLOCK_SAMPLES_MAX];
-static int16_t s_rx_q[SDR_RX_BLOCK_SAMPLES_MAX];
+/* APM32 release build: borrow the spectrum's I/Q block buffers, s_rx_i/s_rx_q above: the check only runs while
+ * the RX chain is being restarted, never while the spectrum polls them. */
 #define s_rx_lock_check_i s_rx_i
 #define s_rx_lock_check_q s_rx_q
 #else
@@ -38480,9 +38495,10 @@ fin:
  * notes for that remaining, separately-tracked piece. Nothing below
  * reads past what it currently reads, so this is now safe, just
  * incomplete for WFM specifically.
+ *
+ * (s_rx_i/s_rx_q themselves are defined once, further up, before
+ * rx_capture_looks_corrupted(), which borrows them on the APM32 build.)
  */
-static int16_t s_rx_i[SDR_RX_BLOCK_SAMPLES_MAX];
-static int16_t s_rx_q[SDR_RX_BLOCK_SAMPLES_MAX];
 /* TCMRAM_BSS, the zero-wait CPU-only RAM, is defined once near the top of
  * the file, before s_db_frame. */
 
