@@ -94,6 +94,7 @@
 
 #define NR_SS_NFRAME 4U
 #define NR_SS_NSTFFT (NR_SS_BLOCK_SAMPLES * NR_SS_NFRAME) /* 32*4 = 128 */
+#define NR_SS_HOP    (NR_SS_NSTFFT / NR_SS_NFRAME)        /* 32: frame advance = block length */
 
 /* Threshold setting range - same as the original's Noise_min/Noise_max. */
 #define NR_SS_NOISE_MIN 0.0f
@@ -137,14 +138,27 @@
 #define TCMRAM_BSS __attribute__((section(".tcmram")))
 
 static float s_dat_stfft[2U * NR_SS_NSTFFT] TCMRAM_BSS; /* interleaved re/im, in place through FFT->gain->IFFT */
-static float s_sigf[NR_SS_NFRAME][NR_SS_NSTFFT] TCMRAM_BSS; /* last NR_SS_NFRAME processed (real) frames, for overlap-add */
+/*
+ * Overlap-add state: the partial sums of the frames already processed, for
+ * the next NR_SS_NFRAME - 1 output blocks (96 floats instead of the last four
+ * whole frames, 512 floats, of which only these 96 values were ever read back).
+ *
+ *   s_ola[0..31]   frames t-3 + t-2 + t-1, for the next block
+ *   s_ola[32..63]  frames t-2 + t-1,       for the block after
+ *   s_ola[64..95]  frame t-1,              for the one after that
+ *
+ * Bit for bit what the four-frame version computed: every output sample is
+ * still 0.0f + oldest + ... + newest, added in that order (the 0.0f start
+ * matters: it turns a -0.0f oldest term into +0.0f, as the old running sum
+ * did). See the end of nr_ss_process().
+ */
+static float s_ola[NR_SS_NSTFFT - NR_SS_HOP] TCMRAM_BSS;
 static float s_sigt[NR_SS_NSTFFT] TCMRAM_BSS; /* input ring buffer */
 static float s_win[NR_SS_NSTFFT] TCMRAM_BSS; /* Hann window */
 static float s_twiddle_cos[NR_SS_NSTFFT / 2U] TCMRAM_BSS;
 static float s_twiddle_sin[NR_SS_NSTFFT / 2U] TCMRAM_BSS;
 static uint16_t s_bitrev[NR_SS_NSTFFT] TCMRAM_BSS;
 static uint32_t s_pt_w;   /* ring buffer write pointer into s_sigt */
-static uint32_t s_pt_frm; /* which s_sigf[] row gets written next (mod NR_SS_NFRAME) */
 /*
  * LA GANANCIA DE CADA BIN, SUAVIZADA EN EL TIEMPO - 07/10/2026.
  *
@@ -562,9 +576,8 @@ void nr_ss_init(void)
     }
 
     memset(s_sigt, 0, sizeof(s_sigt));
-    memset(s_sigf, 0, sizeof(s_sigf));
+    memset(s_ola, 0, sizeof(s_ola));
     s_pt_w = 0U;
-    s_pt_frm = 0U;
     s_enabled = 0U; /* off by default - matches nr_ss_set_strength(0)'s
                       * own default below, and the project owner's ask
                       * that OFF be a genuine, distinct switch. */
@@ -608,15 +621,17 @@ void nr_ss_init(void)
  * Esto NO toca las tablas -giros, ventana, inversion de bits-, que son
  * funcion de constantes y no caducan, ni la fuerza elegida, que es una
  * preferencia del usuario y no un estado de la señal.
+ *
+ * (The overlap-add state is now the s_ola accumulator - partial sums of the
+ * last three frames - rather than four whole frames; same reset, same effect.)
  */
 void nr_ss_reset(void)
 {
     uint32_t q;
 
     memset(s_sigt, 0, sizeof(s_sigt));
-    memset(s_sigf, 0, sizeof(s_sigf));
+    memset(s_ola, 0, sizeof(s_ola));
     s_pt_w   = 0U;
-    s_pt_frm = 0U;
     for (q = 0U; q < NR_SS_NSTFFT; q++) { s_g[q] = 1.0f; }
     memset(s_piso, 0, sizeof(s_piso));
     memset(s_gmin, 0, sizeof(s_gmin));
@@ -666,7 +681,6 @@ void nr_ss_set_strength(uint16_t v)
 void nr_ss_process(float *audio, uint32_t n)
 {
     uint32_t i;
-    uint32_t frm[NR_SS_NFRAME];
 
     /*
      * LA LONGITUD NO SE PIDE POR EDUCACION - 11/10/2026.
@@ -814,28 +828,30 @@ void nr_ss_process(float *audio, uint32_t n)
 
     nr_fft_transform(s_dat_stfft, 1);
 
+    /* The new frame: real part scaled by 1/N, packed into the first
+     * NR_SS_NSTFFT floats of s_dat_stfft (free until the next call). In
+     * place is safe: element i is read from 2i, which nothing has written
+     * yet. Stored, not folded into the sums below, so the compiler cannot
+     * fuse the scaling into an addition: same roundings as before. */
     for (i = 0; i < NR_SS_NSTFFT; i++) {
-        s_sigf[s_pt_frm][i] = s_dat_stfft[2U * i] * (1.0f / (float)NR_SS_NSTFFT);
+        s_dat_stfft[i] = s_dat_stfft[2U * i] * (1.0f / (float)NR_SS_NSTFFT);
     }
-    s_pt_frm++;
-    if (s_pt_frm == NR_SS_NFRAME) { s_pt_frm = 0U; }
 
-    /* 4. Overlap-add: reconstruct this block's `n` output samples
-     * from the last NR_SS_NFRAME processed frames, same indexing the
-     * original's #if Nframe==4 branch hardcoded, generalized off
-     * NR_SS_NFRAME instead. */
-    for (i = 0; i < NR_SS_NFRAME; i++) {
-        uint32_t k = s_pt_frm + i;
-        if (k >= NR_SS_NFRAME) { k -= NR_SS_NFRAME; }
-        frm[i] = k;
-    }
+    /* 4. Overlap-add (same frame alignment as the original's #if Nframe==4
+     * branch): this block is the partial sum of the three older frames plus
+     * the first hop of the new one. n == NR_SS_HOP, checked above. */
     for (i = 0; i < n; i++) {
-        float sum = 0.0f;
-        uint32_t f;
+        float sum = s_ola[i] + s_dat_stfft[i];
 
-        for (f = 0; f < NR_SS_NFRAME; f++) {
-            sum += s_sigf[frm[f]][i + (NR_SS_NFRAME - 1U - f) * (NR_SS_NSTFFT / NR_SS_NFRAME)];
-        }
         audio[i] = sum * NR_SS_ATT_RATIO * (1.0f / (float)NR_SS_NFRAME);
+    }
+    /* Then the accumulator moves one hop: each partial sum takes the next
+     * slice of the new frame, and the last slice starts a fresh sum from
+     * 0.0f. Ascending i reads s_ola[i + NR_SS_HOP] before it is overwritten. */
+    for (i = 0; i < NR_SS_NSTFFT - 2U * NR_SS_HOP; i++) {
+        s_ola[i] = s_ola[i + NR_SS_HOP] + s_dat_stfft[i + NR_SS_HOP];
+    }
+    for (; i < NR_SS_NSTFFT - NR_SS_HOP; i++) {
+        s_ola[i] = 0.0f + s_dat_stfft[i + NR_SS_HOP];
     }
 }
