@@ -204,9 +204,18 @@ static inline void nr_bin(uint32_t j, float *ar, float *ai)
     else                             { *ar = fabsf(p[2U * k]); *ai = fabsf(p[2U * k + 1U]); }
 }
 #define NR_BIN(j, ar, ai) nr_bin((j), &(ar), &(ai))
+/* Bin j's magnitude, from the table nr_ss_process() fills once per frame (see "THE MAGNITUDES, ONCE"). */
+#define NR_AMP(j, a) do { (a) = s_dat_stfft[(j)]; } while (0)
 #else
 #define NR_BIN(j, ar, ai) \
     do { (ar) = fabsf(s_dat_stfft[2U * (j)]); (ai) = fabsf(s_dat_stfft[2U * (j) + 1U]); } while (0)
+#define NR_AMP(j, a)                                                                   \
+    do {                                                                               \
+        float ar_, ai_;                                                                \
+        NR_BIN((j), ar_, ai_);                                                         \
+        (a) = (ar_ > ai_) ? (0.96043457f * ar_ + 0.39782422f * ai_)                   \
+                          : (0.96043457f * ai_ + 0.39782422f * ar_);                   \
+    } while (0)
 #endif
 /*
  * LA GANANCIA DE CADA BIN, SUAVIZADA EN EL TIEMPO - 07/10/2026.
@@ -792,6 +801,26 @@ void nr_ss_process(float *audio, uint32_t n)
     }
 
     arm_rfft_fast_f32(&s_rfft, s_dat_stfft, &s_dat_stfft[NR_SS_NSTFFT], 0U);
+
+    /*
+     * THE MAGNITUDES, ONCE - 14/11/2026. Both passes below took each bin's magnitude through nr_bin() and its
+     * branches, 256 times a frame: on the radio that accessor was about 40 % of nr_ss_process(). Bins 0..64 are
+     * worked out once here, with the same expression as before, and 65..127 copied from their mirrors 63..1 (the
+     * same values nr_bin() gave them), into the first half of s_dat_stfft, which the forward transform left free
+     * until the inverse writes the new frame there. Same numbers, so the same gains, to the bit.
+     */
+    {
+        uint32_t k;
+
+        for (k = 0U; k <= NR_SS_NSTFFT / 2U; k++) {
+            float ar, ai;
+
+            NR_BIN(k, ar, ai);
+            s_dat_stfft[k] = (ar > ai) ? (0.96043457f * ar + 0.39782422f * ai)
+                                       : (0.96043457f * ai + 0.39782422f * ar);
+        }
+        for (; k < NR_SS_NSTFFT; k++) { s_dat_stfft[k] = s_dat_stfft[NR_SS_NSTFFT - k]; }
+    }
 #else
     for (i = 0; i < NR_SS_NSTFFT; i++) {
         s_dat_stfft[2U * i]      = s_sigt[s_pt_w] * s_win[i];
@@ -820,23 +849,18 @@ void nr_ss_process(float *audio, uint32_t n)
         float mn = 1.0e30f;
         for (b = 0U; b < NR_GRUPO; b++) {
             uint32_t j = i * NR_GRUPO + b;
-            float ar, ai, a;
-            NR_BIN(j, ar, ai);
-            a  = (ar > ai) ? (0.96043457f * ar + 0.39782422f * ai)
-                                 : (0.96043457f * ai + 0.39782422f * ar);
+            float a;
+            NR_AMP(j, a);
             if (a < mn) { mn = a; }
         }
         s_gmin[i] = mn * (1.0f / (float)NR_SS_NSTFFT);
     }
 
     for (i = 0; i < NR_SS_NSTFFT; i++) {
-        float xr, xi;
         float amp;
         float g;
 
-        NR_BIN(i, xr, xi);
-        amp =(xr > xi) ? (0.96043457f * xr + 0.39782422f * xi)
-                         : (0.96043457f * xi + 0.39782422f * xr);
+        NR_AMP(i, amp);
         amp *= (1.0f / (float)NR_SS_NSTFFT);
 
         /*
