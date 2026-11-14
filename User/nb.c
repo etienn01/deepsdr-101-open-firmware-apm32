@@ -38,6 +38,23 @@ static uint8_t s_suelo_listo = 0U;
 static float s_ult_i = 0.0f;
 static float s_ult_q = 0.0f;
 
+/*
+ * THE MARKS, ONE BIT PER SAMPLE, AND NO MAGNITUDE ARRAY - 14/11/2026.
+ *
+ * nb_process() kept two static arrays the size of the largest block: the
+ * magnitudes (512 floats) and the marks (512 bytes holding 0 or 1). That
+ * was 2,560 bytes of RAM. The marks are now bits, and the magnitude is
+ * recomputed with mag_l1() wherever it is needed: it is a pure function of
+ * i_buf[k] and q_buf[k], and those are not touched until the fill in step
+ * 4, after the last magnitude has been read. Same operands, same
+ * operation, so the same bits - the result does not change at all. It
+ * saves 2,496 bytes and costs one |I|+|Q| more per sample in the marking
+ * pass (and per marked sample), against one float store and load less.
+ */
+#define NB_MARK_WORDS ((NB_MAX_BLOQUE + 31U) / 32U)
+#define NB_MARK_SET(m, k)  ((m)[(k) >> 5] |= (1U << ((k) & 31U)))
+#define NB_MARK_TEST(m, k) ((((m)[(k) >> 5]) >> ((k) & 31U)) & 1U)
+
 static float mag_l1(float i, float q)
 {
     float ai = (i < 0.0f) ? -i : i;
@@ -86,8 +103,7 @@ void nb_reset(void)
 
 uint32_t nb_process(float *i_buf, float *q_buf, uint32_t n)
 {
-    static float   mag[NB_MAX_BLOQUE];
-    static uint8_t marca[NB_MAX_BLOQUE];
+    static uint32_t marca[NB_MARK_WORDS];   /* one bit per sample, see NB_MARK_WORDS */
     float    umbral, suma;
     uint32_t k, j, marcadas = 0U, buenas = 0U;
     float    suma_malas = 0.0f;  /* lo que se lleva lo marcado, para restar */
@@ -95,13 +111,15 @@ uint32_t nb_process(float *i_buf, float *q_buf, uint32_t n)
     if (s_nivel == 0U || n == 0U || n > NB_MAX_BLOQUE) { return 0U; }
 
     /*
-     * 1. magnitudes. Y de paso se limpia marca[], que antes era una pasada
-     * entera para si sola. Ver el comentario de LAS CINCO PASADAS, abajo.
+     * 1. magnitudes, only their sum: each one is recomputed where it is
+     * needed (see NB_MARK_WORDS). And marca[] is cleared, now a word at a
+     * time. See the comment on LAS CINCO PASADAS, below.
      */
     suma = 0.0f;
     for (k = 0U; k < n; k++) {
-        mag[k] = mag_l1(i_buf[k], q_buf[k]);
-        suma += mag[k];
+        suma += mag_l1(i_buf[k], q_buf[k]);
+    }
+    for (k = 0U; k < (n + 31U) / 32U; k++) {
         marca[k] = 0U;
     }
 
@@ -125,7 +143,9 @@ uint32_t nb_process(float *i_buf, float *q_buf, uint32_t n)
      * marcar y ensanchar, contar las marcadas, y al final sumar las buenas.
      * Y las cuatro ultimas no hacian falta por separado.
      *
-     *   - limpiar marca[] se hace en la pasada de las magnitudes;
+     *   - marca[] is cleared right after the magnitude pass, 16 words at
+     *     most (14/11/2026; it used to be cleared inside that pass, one
+     *     byte per sample, back when it was a byte array);
      *   - contar se hace al marcar, con el truco de contar solo cuando una
      *     marca pasa de 0 a 1 (al ensanchar, los tramos se solapan, y
      *     sumar a ciegas contaria de mas);
@@ -150,16 +170,16 @@ uint32_t nb_process(float *i_buf, float *q_buf, uint32_t n)
         uint32_t ultimo = 0U;    /* primera posicion AUN sin marcar */
 
         for (k = 0U; k < n; k++) {
-            if (mag[k] > umbral) {
+            if (mag_l1(i_buf[k], q_buf[k]) > umbral) {
                 uint32_t d = (k > NB_GUARDA) ? (k - NB_GUARDA) : 0U;
                 uint32_t h = k + NB_GUARDA;
 
                 if (h >= n) { h = n - 1U; }
                 if (d < ultimo) { d = ultimo; }
                 for (j = d; j <= h; j++) {
-                    marca[j] = 1U;
+                    NB_MARK_SET(marca, j);
                     marcadas++;
-                    suma_malas += mag[j];
+                    suma_malas += mag_l1(i_buf[j], q_buf[j]);
                 }
                 if (h + 1U > ultimo) { ultimo = h + 1U; }
             }
@@ -193,11 +213,11 @@ uint32_t nb_process(float *i_buf, float *q_buf, uint32_t n)
         uint32_t ini, fin;
         float i0, q0, i1, q1, paso_i, paso_q;
 
-        if (!marca[k]) { k++; continue; }
+        if (!NB_MARK_TEST(marca, k)) { k++; continue; }
 
         ini = k;
         fin = k;
-        while (fin + 1U < n && marca[fin + 1U]) { fin++; }
+        while (fin + 1U < n && NB_MARK_TEST(marca, fin + 1U)) { fin++; }
 
         /* Borde de la izquierda: la muestra buena anterior, o la ultima del
          * bloque de antes si el tramo empieza en 0. */
