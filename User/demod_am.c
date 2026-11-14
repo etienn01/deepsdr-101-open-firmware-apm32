@@ -1242,10 +1242,26 @@ static uint8_t  s_fil_fam_puesta = 0xFFU;   /* la que hay construida */
  * el chasquido honrado de tirar el historial del biquad, que es el que
  * hace cualquier radio al mover un filtro.
  */
+/*
+ * ONE SET OF COEFFICIENTS FOR THE FOUR STAGES - 14/11/2026.
+ *
+ * The four stages are identical, so each set keeps the five coefficients
+ * once instead of four times, and the interrupt runs the cascade as four
+ * single-stage calls, each with its own four floats of state and the same
+ * coefficients. arm_biquad_cascade_df1_f32() runs a cascade stage by
+ * stage over the whole block, every stage with its own state and reading
+ * the previous stage's output from pDst, so four in-place single-stage
+ * calls do exactly the same arithmetic in the same order: the output is
+ * the same to the bit. The CMSIS instances are gone too - the interrupt
+ * builds each stage's on the stack. 144 bytes less.
+ *
+ * The set swap is unchanged: alpf_cw_build() fills the coefficients and
+ * clears the state of the set that is NOT playing, and only then writes
+ * s_alpf_cw_act; the interrupt reads it once per block.
+ */
 #define ALPF_CW_STAGES 4U
-static arm_biquad_casd_df1_inst_f32 s_alpf_cw_inst[FIL_JUEGOS];
 static float32_t s_alpf_cw_state[FIL_JUEGOS][ALPF_CW_STAGES * 4U];
-static float32_t s_alpf_cw_coeffs[FIL_JUEGOS][ALPF_CW_STAGES * 5U];
+static float32_t s_alpf_cw_coeffs[FIL_JUEGOS][5U];   /* b0 b1 b2 a1 a2, shared by the stages */
 static volatile uint8_t s_alpf_cw_act;   /* cual usa la interrupcion */
 static float     s_alpf_cw_hz = CONFIG_CW_PITCH_HZ;
 /* Ancho a -3 dB del filtro de CW. 500 Hz de partida, que es el ancho
@@ -2926,15 +2942,19 @@ static void alpf_cw_build(void)
     a1n   =  (2.0f * cosf(w0)) / a0;   /* signo ya cambiado, convenio CMSIS */
     a2n   = -(1.0f - alpha) / a0;
 
-    for (k = 0U; k < ALPF_CW_STAGES; k++) {
-        s_alpf_cw_coeffs[otro][k * 5U + 0U] =  b0n;
-        s_alpf_cw_coeffs[otro][k * 5U + 1U] =  0.0f;
-        s_alpf_cw_coeffs[otro][k * 5U + 2U] = -b0n;
-        s_alpf_cw_coeffs[otro][k * 5U + 3U] =  a1n;
-        s_alpf_cw_coeffs[otro][k * 5U + 4U] =  a2n;
+    s_alpf_cw_coeffs[otro][0] =  b0n;
+    s_alpf_cw_coeffs[otro][1] =  0.0f;
+    s_alpf_cw_coeffs[otro][2] = -b0n;
+    s_alpf_cw_coeffs[otro][3] =  a1n;
+    s_alpf_cw_coeffs[otro][4] =  a2n;
+    /* What arm_biquad_cascade_df1_init_f32() used to do here: a clean
+     * start for the new set (see s_alpf_cw_coeffs). */
+    for (k = 0U; k < ALPF_CW_STAGES * 4U; k++) {
+        s_alpf_cw_state[otro][k] = 0.0f;
     }
-    arm_biquad_cascade_df1_init_f32(&s_alpf_cw_inst[otro], ALPF_CW_STAGES,
-                                    s_alpf_cw_coeffs[otro], s_alpf_cw_state[otro]);
+    /* The init call was also what kept the compiler from sinking the
+     * writes above past the switch below; without it, a barrier does. */
+    __asm volatile("" ::: "memory");
     /* Y SOLO AHORA se pone en servicio: una escritura de una palabra, con
      * el juego nuevo ya entero. Igual que fil_construye(). */
     s_alpf_cw_act = otro;
@@ -6918,8 +6938,18 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
              * cortes de abajo - revision a fondo del 08/10/2026, ver el
              * comentario de s_alpf_cw_coeffs. */
             uint8_t jc = s_alpf_cw_act;
-            arm_biquad_cascade_df1_f32(&s_alpf_cw_inst[jc], s_env, s_env,
-                                       SDR_RX_BLOCK_SAMPLES);
+            uint32_t e;
+
+            /* Stage by stage, see s_alpf_cw_coeffs (14/11/2026). */
+            for (e = 0U; e < ALPF_CW_STAGES; e++) {
+                const arm_biquad_casd_df1_inst_f32 stage = {
+                    .numStages = 1U,
+                    .pState    = &s_alpf_cw_state[jc][4U * e],
+                    .pCoeffs   = s_alpf_cw_coeffs[jc],
+                };
+                arm_biquad_cascade_df1_f32(&stage, s_env, s_env,
+                                           SDR_RX_BLOCK_SAMPLES);
+            }
         } else {
             /*
              * El filtro de dos cortes de la familia que suena. El indice
