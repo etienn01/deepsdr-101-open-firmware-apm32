@@ -1322,8 +1322,76 @@ static void wf_c64(const uint16_t *cmap, uint16_t *c64)
         }                                                                                            \
     } while (0)
 
+/*
+ * TO THE PANEL WITH THE PATTERN WORKED OUT ONCE - 14/11/2026. Profiled on the radio at 192 kHz, Very fast: 11.8 % of
+ * the CPU, about 17 cycles a pixel, and the same with the bus data time at 7, 9 or 12 HCLK: the loop's own counting
+ * set the pace, not the panel bus. Which stored columns cover two pixels depends only on src_w and w, so it is worked
+ * out once, by the same stepping as WF6_COLUMNAS, one bit per column (wf6_patron()). The loop then looks a colour up
+ * and writes one pixel, or two with a single 32-bit write, which the bus controller splits into two 16-bit writes to
+ * the data address (RS stays high). Same pixel sequence. A width the bits cannot describe (a column of three pixels
+ * or more, a column left unused, more than WF6_DOS_MAX columns or not a multiple of 8) keeps WF6_COLUMNAS.
+ */
+#define WF6_DOS_MAX 512
+static uint8_t s_wf6_dos[WF6_DOS_MAX / 8];   /* bit j: stored column j covers two pixels */
+static int16_t s_wf6_w, s_wf6_src;            /* what s_wf6_dos describes, 0 = nothing */
+
+static uint8_t wf6_patron(int16_t w, int16_t src_w)
+{
+    int32_t acc = 0;
+    int16_t i = 0, j = 0;
+
+    if ((w == s_wf6_w) && (src_w == s_wf6_src)) { return 1U; }
+    s_wf6_w = 0;
+    if ((src_w <= 0) || (src_w > WF6_DOS_MAX) || ((src_w & 7) != 0) || (w <= 0)) { return 0U; }
+    memset(s_wf6_dos, 0, sizeof s_wf6_dos);
+    while (i < w) {
+        int16_t n = 0;
+
+        if (j >= src_w) { return 0U; }
+        do { n++; i++; acc += src_w; } while ((acc < w) && (i < w));
+        acc -= w;
+        if (n > 2) { return 0U; }
+        if (n == 2) { s_wf6_dos[j >> 3] |= (uint8_t)(1U << (j & 7)); }
+        j++;
+    }
+    if (j != src_w) { return 0U; }
+    s_wf6_w = w;
+    s_wf6_src = src_w;
+    return 1U;
+}
+
+#define WF6_PANEL_COL()                                                       \
+    do {                                                                      \
+        uint32_t c = c64[v & 63U];                                            \
+        v >>= 6;                                                              \
+        if ((m & 1U) != 0U) { *d32 = c | (c << 16); } else { *d16 = (uint16_t)c; } \
+        m >>= 1;                                                              \
+    } while (0)
+
+static void wf6_al_panel(const uint8_t *sp, int16_t src_w, const uint16_t *c64)
+{
+    volatile uint16_t *const d16 = (volatile uint16_t *)LCD_DAT_ADDR;
+    volatile uint32_t *const d32 = (volatile uint32_t *)LCD_DAT_ADDR;
+    const uint8_t *dos = s_wf6_dos;
+    int16_t g;
+
+    for (g = 0; g < src_w; g += 8) {      /* eight columns: six bytes, one byte of the pattern */
+        uint32_t m = *dos++;
+        uint32_t v = (uint32_t)sp[0] | ((uint32_t)sp[1] << 8) | ((uint32_t)sp[2] << 16);
+
+        WF6_PANEL_COL(); WF6_PANEL_COL(); WF6_PANEL_COL(); WF6_PANEL_COL();
+        v = (uint32_t)sp[3] | ((uint32_t)sp[4] << 8) | ((uint32_t)sp[5] << 16);
+        sp += 6;
+        WF6_PANEL_COL(); WF6_PANEL_COL(); WF6_PANEL_COL(); WF6_PANEL_COL();
+    }
+}
+
 static void wf_ensancha6(uint16_t *dp, int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *c64)
 {
+    if ((dp == 0) && wf6_patron(w, src_w)) {
+        wf6_al_panel(sp, src_w, c64);
+        return;
+    }
     if (src_w > w) {
         int16_t  i;
         int32_t  acc = 0;
