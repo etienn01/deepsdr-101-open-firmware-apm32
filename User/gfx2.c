@@ -1290,20 +1290,58 @@ static void wf_c64(const uint16_t *cmap, uint16_t *c64)
     for (v = 0U; v < 64U; v++) { c64[v] = cmap[(v << 2) | 2U]; }
 }
 
-/* wf_ensancha() / wf_envia() for a packed row: the same stepping (pixel i takes column i * src_w / w), into dp,
- * or with dp = 0 straight to the panel. */
+/*
+ * wf_ensancha() / wf_envia() for a packed row: the same stepping (pixel i takes column i * src_w / w), into dp,
+ * or with dp = 0 straight to the panel.
+ *
+ * Per column, not per pixel - 14/11/2026. The per-pixel loop unpacked its column again for every pixel (three byte
+ * loads, a multiply, a shift), reloaded c64 and tested dp each time: about 30 cycles a pixel. Profiled on the radio
+ * at 192 kHz it was the largest single user of the CPU (19-25 %), because the scrolling waterfall rewrites all its
+ * rows (756 x 72 pixels) for every new line, and the panel bus itself needs far less than that per write. Now each
+ * group of three bytes is read once, each column's colour looked up once, and the pixels that column covers
+ * written in a tight loop. The pixel sequence is unchanged: a column is shown again while acc stays below w, and
+ * the next one starts when it reaches w, exactly as `acc += src_w; if (acc >= w) { acc -= w; j++; }` did per
+ * pixel. That needs src_w <= w (each pixel then moves on by at most one column, the case of every caller); any
+ * other width keeps the per-pixel loop.
+ */
+#define WF6_AL_BUFFER(c) (*dp++ = (c))
+#define WF6_COLUMNAS(EMITE)                                                                          \
+    do {                                                                                             \
+        int32_t acc = 0;                                                                             \
+        int16_t i = 0;                                                                               \
+        while (i < w) {                                                                              \
+            uint32_t v = (uint32_t)sp[0] | ((uint32_t)sp[1] << 8) | ((uint32_t)sp[2] << 16);       \
+            uint32_t k;                                                                              \
+            sp += 3;                                                                                 \
+            for (k = 0U; (k < 4U) && (i < w); k++) {                                                 \
+                uint16_t c = c64[v & 63U];                                                           \
+                v >>= 6;                                                                             \
+                do { EMITE(c); i++; acc += src_w; } while ((acc < w) && (i < w));                    \
+                acc -= w;                                                                            \
+            }                                                                                        \
+        }                                                                                            \
+    } while (0)
+
 static void wf_ensancha6(uint16_t *dp, int16_t w, const uint8_t *sp, int16_t src_w, const uint16_t *c64)
 {
-    int16_t  i;
-    int32_t  acc = 0;
-    uint32_t j = 0U;
+    if (src_w > w) {
+        int16_t  i;
+        int32_t  acc = 0;
+        uint32_t j = 0U;
 
-    for (i = 0; i < w; i++) {
-        uint16_t c = c64[WF_P6(sp, j)];
+        for (i = 0; i < w; i++) {
+            uint16_t c = c64[WF_P6(sp, j)];
 
-        if (dp != 0) { dp[i] = c; } else { rm68120_dato(c); }
-        acc += src_w;
-        if (acc >= w) { acc -= w; j++; }
+            if (dp != 0) { dp[i] = c; } else { rm68120_dato(c); }
+            acc += src_w;
+            if (acc >= w) { acc -= w; j++; }
+        }
+        return;
+    }
+    if (dp != 0) {
+        WF6_COLUMNAS(WF6_AL_BUFFER);
+    } else {
+        WF6_COLUMNAS(rm68120_dato);
     }
 }
 #endif
