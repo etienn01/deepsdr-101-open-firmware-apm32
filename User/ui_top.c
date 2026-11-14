@@ -4,6 +4,7 @@
 #include "gfx2.h"
 #include "palette.h"
 #include "font_ui_14.h"
+#include "font_ui_11.h"
 #include "font_ui_14b.h"
 #include "font_ui_18b.h"
 #include "font_num_20.h"
@@ -424,6 +425,26 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
          */
         gfx2_text_in(s, bx, (int16_t)(by + 1), bw, t,
                      &font_ui_14, ink, GFX2_ALIGN_C);
+    }
+
+    /*
+     * --- frames per second, left of the battery, only when short - 14/11/2026 ---
+     *
+     * Asked for by the user: a small sign when the display does not keep up (at 192 kHz with the noise reduction
+     * on it fell from 30 to 22 frames/s). It sits under the clock, in the gap between the clock ink's left edge
+     * (x 726, measured: see UI_TOP_HORA_RX in ui_top.h) and the battery (x 740): 13 px, which take two digits of
+     * font_ui_11 (6 px each), right-aligned with two pixels of air before the battery and centred on its height.
+     * Inside the corner window ui_top_draw_hora() repaints, so changing it costs only that corner.
+     */
+    if (st->fps_bajo != 0U) {
+        char    f[4];
+        uint8_t v = (st->fps_bajo > 99U) ? 99U : st->fps_bajo;
+        uint8_t i = 0U;
+
+        if (v >= 10U) { f[i++] = (char)('0' + (v / 10U)); }
+        f[i++] = (char)('0' + (v % 10U));
+        f[i] = '\0';
+        gfx2_text_in(s, 726, 37, 12, f, &font_ui_11, gfx2_rgb(PAL_WARN), GFX2_ALIGN_R);
     }
 }
 

@@ -879,6 +879,8 @@ static const uint32_t k_audio_bw_hz[3];
 static const uint32_t k_cw_bw_hz[3];   /* lo mismo, para el filtro de CW */
 
 static void top_sync(void);
+/* Frames/s shown left of the battery while the display misses its rate, 0 = on time. See fps_aviso_mide(). */
+static uint8_t s_fps_aviso;
 
 
 static int16_t     banda_indice(uint32_t hz);
@@ -8051,6 +8053,7 @@ static void top_sync(void)
     s_top.ovr   = (uint8_t)(rf_entrada_saturada()
                             || (s_rf_agc_enabled && (s_rf_agc_backoff_x2 > 0)));
     s_top.spk_muted = (uint8_t)(!s_speaker_pa_enabled);
+    s_top.fps_bajo  = s_fps_aviso;
     s_top.sam_ppm = (s_top_sam[0] != '\0') ? s_top_sam : 0;
     /* El boton del banco pone el numero de la memoria mientras el barrido
      * anda: ver ui_top_state_t.mem_scan. */
@@ -39355,6 +39358,36 @@ static uint32_t wf_giro(uint32_t bin, int32_t giro, uint32_t n)
     return (uint32_t)s;
 }
 
+/*
+ * THE FRAMES/S WARNING LEFT OF THE BATTERY - 14/11/2026, asked for by the user (ui_top_state_t.fps_bajo).
+ *
+ * "Short" is judged the way the Information page's Waterfall row reads it: the lines per second the waterfall gets
+ * against the lines per second its speed asks for (k_wf[].clave), both counted over the same second. The sign
+ * appears when it gets less than 90 % of them and goes away at 95 %, so a count that wobbles at the edge does not
+ * make it blink; one line of slack is given to the count, because at the slow speeds (3 and 7 lines/s) a line
+ * falling either side of the one-second window is a third of the figure. What it shows is the frames per second,
+ * the number one thinks of for a lagging display. After a gap in the count (a menu was open, where the waterfall
+ * is not drawn) it goes away until the next full second. Only the clock corner is repainted, and only when what it
+ * shows changes.
+ */
+static void fps_aviso_mide(uint8_t medido)
+{
+    uint8_t nuevo = 0U;
+
+    if (medido && (s_wf_lps != 0U) && (s_fps != 0U)) {
+        uint32_t pide = k_wf[s_wf_vel].clave;
+        uint32_t sale = (uint32_t)s_wf_lps + 1U;
+
+        if ((sale * 100U < pide * 90U) || ((s_fps_aviso != 0U) && (sale * 100U < pide * 95U))) {
+            nuevo = (uint8_t)((s_fps > 99U) ? 99U : s_fps);
+        }
+    }
+    if (nuevo != s_fps_aviso) {
+        s_fps_aviso = nuevo;
+        battery_display_draw();
+    }
+}
+
 __attribute__((noinline))
 static void sdr_spectrum_waterfall_tick(void)
 {
@@ -40557,6 +40590,7 @@ static void sdr_spectrum_waterfall_tick(void)
             s_wf_lineas_antes = 0U;
             s_fotogramas = 0U;
             s_wf_ms0    = ahora;
+            fps_aviso_mide(0U);
         } else if (va >= 1000U) {
             s_wf_lps    = s_wf_lineas;
             s_fps       = s_fotogramas;
@@ -40566,6 +40600,7 @@ static void sdr_spectrum_waterfall_tick(void)
             s_wf_lineas_antes = 0U;
             s_fotogramas = 0U;
             s_wf_ms0    = ahora;
+            fps_aviso_mide(1U);
         }
     }
     } /* !s_menu_open - see this block's opening comment above */

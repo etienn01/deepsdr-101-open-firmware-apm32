@@ -230,6 +230,10 @@ typedef struct {
     uint8_t     jmp_on;
     uint8_t     ovr;         /* entrada saturada */
     uint8_t     spk_muted;   /* altavoz silenciado */
+    /* Frames per second the display is reaching while the waterfall misses the line rate its
+     * speed asks for, drawn small left of the battery; 0 = on time, nothing drawn. See
+     * fps_aviso_mide() in main.c. */
+    uint8_t     fps_bajo;
 } ui_top_state_t;
 
 /* --- la franja de la marquesina, para poder repintar SOLO eso --- */
