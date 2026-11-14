@@ -239,8 +239,9 @@ CALIENTES = demod_am.o nr_ss.o anotch.o audiofil.o sam.o disc_fm.o nco.o \
 # 9,000 blocks over its three paths) for 200 more bytes, which the GD32's flash is kept from.
 # spectrum.c (14/11/2026), APM32 build only: compon(), which builds every row of the panadapter, was the largest
 # single user of the CPU at 192 kHz (12-14 %); at -O2 the radio went from 26 to 28 frames a second, for 1,168 bytes.
+# gfx2.c (14/11/2026), APM32 build only: it draws every page; at -O2 its fills and corners go faster.
 ifneq (,$(findstring CHIP_APM32F407,$(DEFS_EXTRA)))
-CALIENTES += iqbal.o spectrum.o memrapido.o
+CALIENTES += iqbal.o spectrum.o gfx2.o memrapido.o
 endif
 
 

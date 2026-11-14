@@ -406,6 +406,29 @@ void gfx2_render_screen(void (*draw)(gfx2_surf_t *s, void *ctx), void *ctx)
  * Primitivas
  * ------------------------------------------------------------------------ */
 
+#ifdef CHIP_APM32F407
+/*
+ * APM32 build (14/11/2026): an opaque fill writes two pixels per 32-bit store, eight per turn. The pixel-per-store
+ * loop was 23 % of the time spent drawing the Settings page, profiled on the radio. Same pixels.
+ */
+typedef uint32_t __attribute__((may_alias)) gfx2_par_t;
+
+static void fila_pon(uint16_t *p, uint16_t v, int16_t n)
+{
+    if (n <= 0) { return; }
+    if (((uintptr_t)p & 2U) != 0U) { *p++ = v; n--; }
+    {
+        uint32_t vv = (uint32_t)v | ((uint32_t)v << 16);
+        gfx2_par_t *q = (gfx2_par_t *)(void *)p;
+
+        while (n >= 8) { q[0] = vv; q[1] = vv; q[2] = vv; q[3] = vv; q += 4; n = (int16_t)(n - 8); }
+        while (n >= 2) { *q++ = vv; n = (int16_t)(n - 2); }
+        p = (uint16_t *)(void *)q;
+    }
+    if (n != 0) { *p = v; }
+}
+#endif
+
 void gfx2_fill(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t h,
                gfx2_rgba_t c)
 {
@@ -431,7 +454,12 @@ void gfx2_fill(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t h,
         uint16_t v = gfx2_to565(c.r, c.g, c.b);
         for (iy = y0; iy < y1; iy++) {
             uint16_t *row = &s->px[(int32_t)iy * s->w];
+#ifdef CHIP_APM32F407
+            (void)ix;
+            fila_pon(&row[x0], v, (int16_t)(x1 - x0));
+#else
             for (ix = x0; ix < x1; ix++) row[ix] = v;
+#endif
         }
     } else {
         for (iy = y0; iy < y1; iy++) {
@@ -707,8 +735,19 @@ void gfx2_vgrad(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t h,
  * sigue estando aqui y da exactamente lo mismo.
  */
 #define RR_TAB_MAX  16
-static uint8_t s_rr_tab[2][RR_TAB_MAX * RR_TAB_MAX];
-static int16_t s_rr_rad[2] = { -1, -1 };
+/*
+ * APM32 build (14/11/2026): four slots. With gfx2_rrect_outline() reading its corners from the tables too, the
+ * Settings page asks for three radii (8, 7 and 6: the cells, their inner edge and the selected cell's) and two
+ * slots kept recomputing them. 512 bytes more.
+ */
+#ifdef CHIP_APM32F407
+#define RR_HUECOS   4
+static int16_t s_rr_rad[RR_HUECOS] = { -1, -1, -1, -1 };
+#else
+#define RR_HUECOS   2
+static int16_t s_rr_rad[RR_HUECOS] = { -1, -1 };
+#endif
+static uint8_t s_rr_tab[RR_HUECOS][RR_TAB_MAX * RR_TAB_MAX];
 static uint8_t s_rr_turno;
 
 static uint16_t rr_cov(int16_t px, int16_t py, int16_t x, int16_t y,
@@ -757,10 +796,10 @@ static const uint8_t *rr_tabla(int16_t r)
     int16_t ix, iy;
 
     if (r < 1 || r > RR_TAB_MAX) { return (const uint8_t *)0; }
-    for (k = 0U; k < 2U; k++) {
+    for (k = 0U; k < RR_HUECOS; k++) {
         if (s_rr_rad[k] == r) { return s_rr_tab[k]; }
     }
-    k = (uint8_t)(s_rr_turno & 1U);
+    k = (uint8_t)(s_rr_turno & (RR_HUECOS - 1U));
     s_rr_turno++;
     for (iy = 0; iy < r; iy++) {
         for (ix = 0; ix < r; ix++) {
@@ -854,6 +893,9 @@ void gfx2_rrect_outline(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t
 {
     int16_t iy, ix, k;
     uint16_t cov_o, cov_i;
+#ifdef CHIP_APM32F407
+    const uint8_t *to = (const uint8_t *)0, *ti = (const uint8_t *)0;
+#endif
 
     if (w <= 0 || h <= 0 || t <= 0) return;
     /* La banda, Y TAMBIEN la ventana en horizontal: ver el comentario de
@@ -887,6 +929,28 @@ void gfx2_rrect_outline(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t
         gfx2_fill(s, x, (int16_t)(y + r), t, (int16_t)(h - 2 * r), c);
         gfx2_fill(s, (int16_t)(x + w - t), (int16_t)(y + r), t, (int16_t)(h - 2 * r), c);
 
+#ifdef CHIP_APM32F407
+        /*
+         * APM32 build (14/11/2026): the corners from the coverage tables, as gfx2_rrect() already does, instead of two
+         * rr_cov() of 16 subsamples per corner pixel - with the filled corners, 35 % of the time spent drawing the
+         * Settings page, profiled on the radio. The outer edge is the table of r, exactly as for gfx2_rrect(); the
+         * inner one, of radius ri = r - t on the rectangle inset by t, is the table of ri read t pixels in, and 0
+         * left of or above the inset rectangle, where no subsample is inside it. r <= w/2 and h/2 makes both
+         * rectangles at least 2r (2ri) wide and high, which is what the tables assume. When fetching the second
+         * table took the slot of the first, the first is fetched again (into the next slot). With ri < 1 there is
+         * no inner corner: a corner pixel is then left of or above the inset rectangle, coverage 0.
+         */
+        {
+            int16_t ri = (int16_t)(r - t);
+            to = rr_tabla(r);
+            ti = (ri >= 1) ? rr_tabla(ri) : (const uint8_t *)0;
+            if ((to != 0) && (ti != 0) && (ri != r)) {
+                uint8_t ko = (uint8_t)((to - s_rr_tab[0]) / (RR_TAB_MAX * RR_TAB_MAX));
+                if (s_rr_rad[ko] != r) { to = rr_tabla(r); }
+            }
+            if ((ri >= 1) && (ti == 0)) { to = (const uint8_t *)0; }   /* inner radius off the tables: old path */
+        }
+#endif
         /* cuatro cajas de esquina, r x r */
         for (iy = 0; iy < r; iy++) {
             for (ix = 0; ix < r; ix++) {
@@ -898,6 +962,15 @@ void gfx2_rrect_outline(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t
                  * comprobacion de banda delante, por lo mismo. */
                 if ((ys[0] < s->y || ys[0] >= (int16_t)(s->y + s->h))
                     && (ys[1] < s->y || ys[1] >= (int16_t)(s->y + s->h))) { continue; }
+#ifdef CHIP_APM32F407
+                if (to != 0) {
+                    /* See the tables above the loop: the same numbers, read. */
+                    int16_t jx = (int16_t)(ix - t), jy = (int16_t)(iy - t);
+
+                    cov_o = to[iy * RR_TAB_MAX + ix];
+                    cov_i = (cov_o && ti && jx >= 0 && jy >= 0) ? ti[jy * RR_TAB_MAX + jx] : (uint16_t)0;
+                } else
+#endif
                 {
                     int16_t ri = (int16_t)(r - t);
                     if (ri < 0) { ri = 0; }
