@@ -120,7 +120,7 @@ BLANCA = {
     # los NOMBRES DE LAS COLUMNAS, o sea que traducirlos partiria en dos el
     # formato del fichero -un BANCO.CSV escrito en ingles no se leeria en
     # castellano-. Misma razon que las claves de CONFIG.CSV: es un dato.
-    ('banco.c', r'banco,memoria,hz,modo,paso_hz,fil_lo,fil_hi,cw\n'):
+    ('banco.c', r'banco,memoria,hz,modo,paso_hz,fil_lo,fil_hi,cw,vistas\n'):
         'cabecera de columnas de BANCO.CSV, no es interfaz',
 }
 

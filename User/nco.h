@@ -86,6 +86,75 @@ void nco_freq(nco_t *o, float hz, float fs_hz);
 /* La frecuencia que ha quedado de verdad, despues de redondear al
  * incremento entero. Existe para poder ENSEÑARLA y para que el banco
  * compruebe el error en vez de suponerlo. */
+/*
+ * ======================================================================
+ * EL INCREMENTO DE FASE DE UNA FRECUENCIA, EN UN SOLO SITIO - 11/11/2026.
+ * ======================================================================
+ *
+ * hz/fs de vuelta por muestra, en la rejilla de 2^32. Esta cuenta estaba
+ * escrita SEIS veces -nco_freq(), bip.c, ax25.c, dsc.c, navtex.c y
+ * wefax.c- y las seis en double, con el mismo comentario explicando que
+ * 2^32 no cabe en los 24 bits de un float.
+ *
+ * Era verdad y la conclusion estaba mal: en este chip la FPU es de
+ * precision SIMPLE, asi que cada double lo hacia una rutina por software.
+ * Las veinticuatro que entraban por aqui sumaban 3.636 bytes de flash.
+ *
+ * EN ENTERO DE 64 BITS SALE EXACTO, mas que en double:
+ *
+ *   - hz se parte en entero y fraccion;
+ *   - la parte entera por 2^32 es un desplazamiento;
+ *   - y la fraccion por 2^32 tambien es exacta EN FLOAT, porque
+ *     multiplicar por una potencia de dos solo mueve el exponente y no
+ *     toca la mantisa.
+ *
+ *   Asi que el numerador es hz * 2^32 sin perder un bit. Dividido por fs
+ *   da el incremento, y quedarse con los 32 bits de abajo es el modulo
+ *   una vuelta -lo que antes hacia un floor() en double-. Con hz negativa
+ *   el truncado en complemento a dos da la fase que toca.
+ *
+ * fs es 48.000, 96.000 o 192.000 y se representa exacta en float.
+ *
+ * Es `static inline` y no una funcion de nco.c porque los que la llaman
+ * son seis sitios que la usan UNA VEZ cada uno -al arrancar un decodor o
+ * al mover el mando-: no hay camino caliente que proteger, y asi no hay
+ * que exportar nada ni que acordarse de enlazar nco.c donde no hacia
+ * falta.
+ */
+static inline uint32_t nco_inc_de(float hz, float fs_hz)
+{
+    int32_t  ent;
+    float    fra;
+    uint32_t fra32, fs_i;
+    int64_t  num;
+
+    /*
+     * NINGUNA CONVERSION DE FLOAT A ENTERO DE 64 BITS, Y NO ES UN CAPRICHO.
+     *
+     * La primera version de esto ponia (int64_t)(fra * 4294967296.0f) y
+     * (int64_t)(fs_hz + 0.5f). Las dos son float -> entero de 64 bits, o
+     * sea __aeabi_f2lz, y ESA rutina de libgcc hace la cuenta con dobles
+     * por dentro: dejaba enganchado todo el juego de aritmetica en doble
+     * que este cambio venia a quitar. Pasando por 32 bits primero, que es
+     * donde los dos numeros caben de verdad, no entra ninguna.
+     *
+     * fra esta en [0,1) -el ajuste de abajo se encarga-, asi que
+     * fra * 2^32 esta en [0, 2^32) y cabe en un uint32_t. Y multiplicar
+     * por una potencia de dos no toca la mantisa, asi que el producto es
+     * exacto y no puede llegar a 2^32 por redondeo.
+     *
+     * fs es 48.000, 96.000 o 192.000: un uint32_t de sobra.
+     */
+    fs_i = (uint32_t)(fs_hz + 0.5f);
+    if (fs_i == 0U) { return 0U; }
+    ent = (int32_t)hz;                 /* trunca hacia cero */
+    fra = hz - (float)ent;             /* mismo signo que hz */
+    if (fra < 0.0f) { ent -= 1; fra += 1.0f; }   /* a [0,1) */
+    fra32 = (uint32_t)(fra * 4294967296.0f);
+    num   = ((int64_t)ent << 32) + (int64_t)fra32;
+    return (uint32_t)(num / (int64_t)fs_i);
+}
+
 float nco_freq_real(const nco_t *o, float fs_hz);
 
 /* Arranca la fase de cero. Solo hace falta cuando importa el instante

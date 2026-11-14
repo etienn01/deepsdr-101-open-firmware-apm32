@@ -611,7 +611,7 @@ void dsc_start(float fs_hz)
     s_st->signo_ant = 1U;
     tonos_fija();
 
-    s_st->inc_nom = (uint32_t)((double)DSC_BAUD / (double)fs_hz * 4294967296.0 + 0.5);
+    s_st->inc_nom = nco_inc_de((float)DSC_BAUD, fs_hz);
     s_st->inc = s_st->inc_nom;
     s_st->nivel = 1e-9f;
     s_on = 1U;

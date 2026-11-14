@@ -36,8 +36,15 @@
  */
 
 struct hfdl_hfnpdu_location {
-    double lat; /* degrees, positive = North */
-    double lon; /* degrees, positive = East */
+    /* EN FLOAT DESDE EL 11/11/2026, antes double. El dato de origen son
+      * VEINTE BITS -ver parse_lat_lon()-, o sea que la coordenada trae
+      * 1,7e-4 grados de resolucion de fabrica, y se pinta y se guarda con
+      * cuatro decimales (lat_e4/lon_e4). Un float lleva siete cifras
+      * significativas: de sobra para tres enteras y cuatro decimales. Lo
+      * que costaba el doble eran las rutinas por software de libgcc,
+      * porque la FPU de este chip es de precision simple. */
+    float lat; /* degrees, positive = North */
+    float lon; /* degrees, positive = East */
 };
 
 struct hfdl_hfnpdu_time {

@@ -17,7 +17,7 @@
 /* Los datos estan en fonts_data.c, no aqui. */
 extern const uint8_t font_ui_14_bitmap[6002];
 extern const gfx2_glyph_t font_ui_14_glyphs[117];
-extern const gfx2_range_t font_ui_14_ranges[22];
+/* Su tabla de rangos se comparte: ver fonts_data.c. */
 extern const gfx2_font_t font_ui_14;
 
 #endif /* FONT_UI_14_H */

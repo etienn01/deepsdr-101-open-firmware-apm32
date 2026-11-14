@@ -28,6 +28,8 @@
 #include <stdint.h>
 #include "demod_stubs.h"
 #include "gd32f4xx.h"
+#include "sdr_rx.h"
+#include "demod_am.h"
 #include "dcf77.h"
 
 consumidor_t g_cons[CONS_N];
@@ -176,6 +178,27 @@ void cons_paso_ciclos(uint32_t c) { s_paso_ciclos = c; }
 const int16_t *cons_audio(void) { return s_cap; }
 
 uint32_t g_i2s_tramas;    /* las que ha DICHO el que llama, para el banco */
+
+/*
+ * LO QUE EL I2S TIENE ARMADO. Desde el 12/11/2026 demod_am.c se lo
+ * pregunta en vez de deducirlo de su propia copia de la bandera de los
+ * 192 kHz, para que no haya dos verdades que puedan discrepar.
+ *
+ * Por defecto el tapon hace lo que haria la radio bien armada: sigue a la
+ * tasa. Un banco puede FORZAR otro numero con cons_i2s_tramas_media()
+ * para representar justo lo que no deberia pasar -hardware armado para
+ * una cosa y demodulador en otra- y comprobar que aun asi sale audio.
+ */
+static uint32_t s_i2s_fph;
+
+void cons_i2s_tramas_media(uint32_t n) { s_i2s_fph = n; }
+
+uint32_t gd32_i2s_frames_per_half(void)
+{
+    if (s_i2s_fph != 0U) { return s_i2s_fph; }
+    return demod_am_get_rf_doble() ? (uint32_t)SDR_RX_BLOCK_SAMPLES_WFM
+                                   : (uint32_t)SDR_RX_BLOCK_SAMPLES;
+}
 
 void gd32_i2s_stream_write_half(const int16_t *stereo_frames, uint32_t n_frames)
 {

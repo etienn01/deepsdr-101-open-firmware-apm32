@@ -50,7 +50,13 @@ float ft8_snr_db(const ftx_waterfall_t *wf, const ftx_candidate_t *cand)
     uint16_t histo[WF_MAG_NIVELES];
     uint32_t n_ruido = 0UL;
     uint32_t simbolos = 0UL;
-    double suma_sn = 0.0;          /* potencias lineales: se acumulan en doble */
+    /* EN FLOAT DESDE EL 11/11/2026. Se acumulaban en doble "por
+     * precision", pero son setenta y nueve sumandos del mismo orden de
+     * magnitud: en float la perdida relativa es de 2^-24 por suma, o sea
+     * del orden de 1e-5 sobre el total, y de ahi sale un numero que se
+     * imprime con UN decimal de dB. El doble costaba las rutinas por
+     * software de libgcc. Lo vigila sim/ft8_snr.c. */
+    float suma_sn = 0.0f;          /* potencias lineales acumuladas */
     float  p_ruido, p_sn, p_sig, snr;
     int sym, i, k;
 
@@ -82,7 +88,7 @@ float ft8_snr_db(const ftx_waterfall_t *wf, const ftx_candidate_t *cand)
             int v = WF_MAG_NIVEL(wf, fila + k);
             if (v > mayor) { mayor = v; }
         }
-        suma_sn += (double)lineal(WF_MAG_NIVEL_DB(mayor));
+        suma_sn += lineal(WF_MAG_NIVEL_DB(mayor));
         simbolos++;
 
         /*
@@ -156,7 +162,7 @@ float ft8_snr_db(const ftx_waterfall_t *wf, const ftx_candidate_t *cand)
 
     if (!(p_ruido > 0.0f)) { return FT8_SNR_SUELO_DB; }
 
-    p_sn  = (float)(suma_sn / (double)simbolos);
+    p_sn  = suma_sn / (float)simbolos;
 
     /*
      * Y AQUI SE RESTA EL SESGO DEL MAXIMO DE OCHO, QUE NO ES Pn - 13/10/2026.

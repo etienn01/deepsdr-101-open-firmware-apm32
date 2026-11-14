@@ -271,14 +271,40 @@ typedef enum {
      * retuneesa nada, quedate en la FM que estes escuchando".
      */
     HORA_RDS,
+    /*
+     * RWM - 13/11/2026, pedido por el dueño. Las tres frecuencias de la
+     * MISMA emisora de Moscu: llevan la misma señal a la vez y lo unico que
+     * cambia es a que hora propaga cada una.
+     *
+     * *** VAN DETRAS DEL RDS A PROPOSITO, y no por desorden: HORA_BARRIDO_N
+     * vale (int)HORA_RDS, asi que todo lo que este detras queda FUERA del
+     * barrido automatico. Y RWM tiene que quedar fuera: el barrido compara
+     * el contraste de la marca de segundo que mide dcf77.c, y RWM no pasa
+     * por ese decodificador. ***
+     *
+     * Y OJO CON LO QUE PROMETEN: RWM no manda la hora del dia -ver
+     * hora_rwm.h-. De estas tres sale el borde de minuto y el DUT1, no un
+     * hh:mm. La pantalla de la hora las atiende por su propio camino, igual
+     * que hace con el RDS.
+     */
+    HORA_RWM4996,
+    HORA_RWM9996,
+    HORA_RWM14996,
     HORA_N
 } hora_emisora_t;
+
+/* 1 si esa emisora es una de las tres de RWM. Lo preguntan dcf77.c -para
+ * repartir el audio- y la pantalla de la hora. */
+uint8_t hora_es_rwm(hora_emisora_t e);
 
 /*
  * Cuantas entran en el BARRIDO automatico. Todas menos el RDS: el barrido
  * compara el contraste de la marca de segundo entre emisoras horarias, y el
  * RDS no tiene marca de segundo ni frecuencia propia que visitar. Meterlo
  * seria una columna vacia en la tabla comparativa.
+ *
+ * Y por eso todo lo que NO entra en el barrido va detras del RDS en el
+ * enum: asi esta cuenta sigue siendo una sola linea. RWM esta ahi.
  */
 #define HORA_BARRIDO_N  ((int)HORA_RDS)
 

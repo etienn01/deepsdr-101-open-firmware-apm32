@@ -18,6 +18,381 @@ ordered by date, does not spare the detail, and is not published.
 
 ---
 
+## V6.77 · 2026-11-13
+
+### Qué cambia
+
+**Nueva emisora horaria: RWM, en 4996, 9996 y 14996 kHz.** Pedida por el
+dueño. Las tres frecuencias son el mismo transmisor —uno en la zona de
+Moscú, del instituto de metrología ruso— radiando lo mismo a la vez; lo
+único que cambia es a qué hora propaga cada una.
+
+- **Y lo primero, porque decide todo lo demás: RWM no manda la hora del
+  día.** Lo dice su norma. Las otras siete traen una trama con hora, minuto
+  y fecha; ésta manda intervalos de tiempo patrón, de una precisión enorme,
+  que no dicen en qué minuto estás.
+- **Así que su Aplicar pone el minuto y el segundo** y deja la hora y la
+  fecha como las tengas. Coge el pulso largo que marca el minuto y redondea
+  al minuto más cercano. De ahí su límite, y lo dice la pantalla: acierta si
+  tu reloj no iba desviado más de medio minuto.
+- Su ciclo se repite cada media hora y **sólo de :10 a :30 hay algo que la
+  radio pueda usar** — el resto son portadora, silencio y la identificación
+  en Morse.
+- **Y da el DUT1**, que no lo da ninguna otra emisora de la radio: cuánto se
+  ha desviado la rotación de la Tierra del tiempo atómico.
+
+**Arreglado: con RDS, el botón Aplicar se quedaba en el HH:MM anterior.**
+Avisado por el mismo probador que cazó lo de los segundos en ALS162. Era el
+orden de dos escrituras del reloj: se anclaba bien y la línea siguiente lo
+machacaba con los segundos a cero. La otra rama lo hacía bien desde el 29/10
+y su comentario **afirmaba que ésta también**. No era verdad, y nadie lo
+miraba: ahora lo exige un guión en las tres ramas.
+
+**SSTV: medido, y el umbral no era el problema.** Avisado por un usuario que
+lo daba por demasiado alto. Se probaron las cuatro rejas una por una y
+**ninguna mejora: dos empeoran y dos no cambian nada**. El desvío de
+sintonía tampoco (aguanta +150 Hz). Lo que sí quedó es el número que no
+había: dónde se cae, que es entre sigma 0,40 y 0,70 según el modo. No se
+tocó ninguna constante.
+
+**456 bytes de flash de vuelta.** Las cuatro fuentes de interfaz llevaban la
+misma tabla de rangos de caracteres repetida, y las dos de números igual: 76
+entradas de 6 bytes que estaban cuatro y dos veces. Ahora se comparten.
+
+**La flash queda en 490.708** (812 libres). RWM costó 2.612 bytes.
+
+### What's new
+
+**A new time station: RWM, on 4996, 9996 and 14996 kHz.** Asked for by the
+owner. The three frequencies are one and the same transmitter —near Moscow,
+run by the Russian metrology institute— radiating the same signal at the same
+time; the only difference is what time of day each one propagates.
+
+- **And first, because it decides everything else: RWM does not send the time
+  of day.** Its own standard says so. The other seven carry a frame with
+  hour, minute and date; this one sends standard time intervals of enormous
+  precision which do not tell you which minute you are in.
+- **So its Apply sets the minute and the second** and leaves the hour and the
+  date as you have them. It takes the long pulse that marks the minute and
+  rounds to the nearest minute. Hence its limit, which the screen states: it
+  gets it right if your clock was no more than half a minute out.
+- Its cycle repeats every half hour and **only from :10 to :30 is there
+  anything the radio can use** — the rest is carrier, silence and the Morse
+  identification.
+- **And it gives DUT1**, which no other station in the radio does: how far
+  the Earth's rotation has drifted from atomic time.
+
+**Fixed: with RDS, the Apply button left the clock on the previous HH:MM.**
+Reported by the same tester who caught the seconds on ALS162. It was the
+order of two writes to the clock: it anchored correctly and the next line
+overwrote it with the seconds at zero. The other branch had been doing it
+right since 29/10 and its comment **claimed this one did too**. It did not,
+and nobody was checking: a script now enforces it across all three branches.
+
+**SSTV: measured, and the threshold was not the problem.** Reported by a user
+who believed it was too high. All four gates were tried one by one and **none
+improves: two make it worse and two change nothing**. Tuning offset is not it
+either (it holds +150 Hz). What did come out is the figure nobody had: where
+it falls off, which is between sigma 0.40 and 0.70 depending on the mode. Not
+one constant was changed.
+
+**456 bytes of flash back.** The four interface fonts each carried the same
+character-range table, and the two numeric fonts likewise: 76 six-byte
+entries stored four and two times over. They are now shared.
+
+**Flash is now 490,708** (812 free). RWM cost 2,612 bytes.
+
+---
+
+## V6.76 · 2026-11-12
+
+### Qué cambia
+
+**Arreglado: la radio se quedaba muda y sólo volvía apagándola.** Avisado
+por un usuario, que llevaba tiempo viéndolo: dándole al botón de Ruido
+unas cuantas veces el audio desaparecía, y ni cambiando de modo volvía.
+Con un detalle que resultó ser la clave: **en FM ancha sí había audio**.
+
+- **Lo que pasaba.** La última línea del camino de audio comprueba que el
+  número de tramas que le entregan sea el que tiene armado el convertidor.
+  Si no cuadraba, escribía silencio y se iba — y esa condición no es un
+  tropiezo suelto: si se desalinea una vez, se desalinea en todos los
+  bloques, 375 veces por segundo. O sea la radio muda hasta apagarla, y
+  **sin decir nada**, porque el único aviso salía por un puerto serie que
+  va apagado.
+- **Por qué FM ancha se salvaba.** Es el único modo que entrega su número
+  sin preguntar por la bandera de los 192 kHz. Los demás la consultaban, y
+  esa bandera es una *copia* de un dato que el convertidor ya tiene.
+- **Lo que se hace.** Se acabaron las dos copias: el demodulador ahora le
+  **pregunta al convertidor** cuántas tramas quiere. Y además sale más
+  correcto, porque subir el audio a medio banda depende de la tasa del
+  convertidor, no de la de entrada.
+- **Y el silencio total deja de ser posible.** Si algún día se vuelven a
+  desalinear, ahora se copia lo que quepa y se rellena el resto. Se oirá
+  sucio —y se investigará— en vez de no oírse nada.
+
+**Lo que se descartó por el camino, con números.** El silencio de
+asentamiento (se rearma en cada cambio de modo), el reductor de ruido
+(doce conmutaciones en siete fases, en cuatro modos: el audio vuelve al
+98-100 %), una carrera entre el botón y la interrupción (no puede
+existir), el pico del automático (con el peor chasquido posible vuelve en
+300 ms, no en «nunca»), el silenciador, el pitido de los avisos y la
+sobrecarga de la interrupción (29 % del presupuesto con banda lateral y
+reductor, medido en el Cortex-M4).
+
+**Banco nuevo, `make nrconmuta`**, que se queda vigilando las tres cosas:
+que conmutar Ruido no deje mudo ningún modo, que ninguna discontinuidad de
+la cadena la deje muda, y que lo que entrega el demodulador sea siempre lo
+que el convertidor tiene armado.
+
+> **Sin cerrar, y dicho claro:** el descuadre ya no puede dejar la radio
+> muda, pero no se ha encontrado por dónde se producía. Si el aviso vuelve
+> con esta versión, el síntoma será otro —audio sucio a tirones en vez de
+> silencio— y eso ya es una pista.
+
+**La flash sube 80 bytes** (488.520, quedan 3.000 libres).
+
+### What's new
+
+**Fixed: the radio went silent and only a power cycle brought it back.**
+Reported by a user who had been seeing it for a while: pressing the Noise
+button a few times killed the audio, and changing mode did not bring it
+back. With one detail that turned out to be the key: **WFM still had
+audio**.
+
+- **What was happening.** The last stage of the audio path checks that the
+  frame count handed to it matches the one the codec stream is armed for.
+  If it did not, it wrote silence and returned — and that condition is not
+  a one-off: if the two counts drift apart once, they drift apart on every
+  block, 375 times a second. That is a dead radio until you switch it off,
+  **and a silent one**, because the only warning went out over a serial
+  port that ships disabled.
+- **Why WFM survived.** It is the only mode that hands over its count
+  without consulting the 192 kHz flag. The others did, and that flag is a
+  *copy* of something the codec side already knows.
+- **What changed.** No more two copies: the demodulator now **asks the
+  codec stream** how many frames it wants. It is also more correct, since
+  whether the audio needs half-band interpolation depends on the DAC's
+  rate, not the input's.
+- **And total silence is no longer possible.** Should they ever drift
+  apart again, what fits is copied and the rest is filled. It will sound
+  broken — and get investigated — instead of not sounding at all.
+
+**What was ruled out along the way, with numbers.** The settle mute (it is
+re-armed on every mode change), the noise reduction (twelve toggles across
+seven phases in four modes: audio returns at 98-100 %), a race between the
+button and the interrupt (it cannot exist), the AGC peak (worst possible
+click recovers in 300 ms, not "never"), the squelch, the alert beep and
+ISR overload (29 % of the budget with SSB plus NR, measured on a Cortex-M4).
+
+**New bench, `make nrconmuta`**, left in place watching three things: that
+toggling Noise mutes no mode, that no chain discontinuity can silence it,
+and that what the demodulator hands over always matches what the codec
+stream is armed for.
+
+> **Open, and said plainly:** the mismatch can no longer silence the
+> radio, but where it came from has not been found. If the report comes
+> back on this version the symptom will be different — broken, stuttering
+> audio instead of silence — and that is itself a clue.
+
+**Flash grows by 80 bytes** (488,520, leaving 3,000 free).
+
+---
+
+## V6.75 · 2026-11-11
+
+### Qué cambia
+
+**El escáner de tramo va más de tres veces más rápido.** Avisado por el
+dueño: «el scanner es muy lento». Y lo era.
+
+- **La cuenta que lo dice:** un tramo de 1 MHz a pasos de 5 kHz son 200
+  puntos. Con los tiempos que había —150 ms de asentamiento y 250 de
+  mirar— eran 400 ms por punto, o sea **80 segundos por vuelta**. Para una
+  banda eso no es un barrido, es una espera.
+- Esos tiempos venían del **barrido de memorias**, donde están medidos y
+  son correctos: cazan a alguien hablando las 24 veces de 24, con quince
+  canales conocidos y una vuelta de seis segundos. Un tramo busca otra
+  cosa —si hay alguien ahí, no entender lo que dice— y vuelve a pasar
+  enseguida, así que no necesita acertar a la primera.
+- **Lo que sí hay que pagar está medido**, contra la cadena de verdad: lo
+  que tarda la lectura del nivel en asentarse después de un salto, con el
+  estimador corriendo y un escalón de 34 dB. **AM 2 ms, USB 93, NFM 101.**
+  Unos 100 ms en el peor caso; por debajo de eso no se mide la frecuencia
+  nueva, se mide el transitorio de la anterior.
+- Así que el tramo pasa a **60 + 60 = 120 ms por punto**, y la ventana de
+  mirar cae donde la lectura ya ha hecho el 90 % del camino. Medido en el
+  banco: **24,1 segundos por vuelta** en vez de 80.
+- **Lo que se pierde, dicho claro:** una emisora que apenas saque los
+  10 dB del suelo puede no dar la cara en una pasada concreta. Se la lleva
+  la siguiente, que ahora llega en 24 segundos en vez de en 80.
+
+**Y el banco ahora nota el retardo de la lectura.** Devolvía el nivel
+exacto del punto, sin retardo: con eso, acortar los tiempos salía gratis y
+seguía en verde — estaba midiendo una radio que no existe. Ahora lleva el
+mismo suavizado que la radio.
+
+**La flash baja 16 bytes** (488.440, quedan 3.080 libres).
+
+### What's new
+
+**The band scanner is more than three times faster.** Reported by the
+owner: "the scanner is very slow". It was.
+
+- **The arithmetic that says so:** a 1 MHz range in 5 kHz steps is 200
+  points. With the previous timings —150 ms to settle and 250 to look—
+  that was 400 ms per point, i.e. **80 seconds per sweep**. For a band
+  that is not a sweep, it is a wait.
+- Those timings came from the **memory scan**, where they are measured and
+  correct: they catch a speaker 24 times out of 24, across fifteen known
+  channels on a six-second cycle. A range is after something else —whether
+  anyone is there, not what they are saying— and comes round again
+  shortly, so it does not have to get it right first time.
+- **What does have to be paid is measured**, against the real chain: how
+  long the level reading takes to settle after a jump, with the estimator
+  running and a 34 dB step. **AM 2 ms, USB 93, NFM 101.** About 100 ms
+  worst case; below that you are not measuring the new frequency, you are
+  measuring the previous one's transient.
+- So a range now runs at **60 + 60 = 120 ms per point**, with the look
+  window falling where the reading has already covered 90 % of the way.
+  Measured on the bench: **24.1 seconds per sweep** instead of 80.
+- **What is lost, plainly:** a station barely 10 dB above the floor may
+  not show on a given pass. The next one picks it up, and that now arrives
+  in 24 seconds instead of 80.
+
+**And the bench now feels the reading's lag.** It returned the exact level
+at the dial with no delay: with that, shortening the timings was free and
+it stayed green — it was measuring a radio that does not exist. It now
+carries the same smoothing the radio does.
+
+**Flash drops 16 bytes** (488,440, leaving 3,080 free).
+
+---
+
+## V6.74 · 2026-11-11
+
+### Qué cambia
+
+**El escáner, corregido con la radio delante.** Cuatro cosas que no
+estaban bien en la V6.73, avisadas al probarlo:
+
+- **El teclado pedía la frecuencia dos veces y las dos ponía
+  «Frecuencia».** Ahora dice **«Frecuencia de inicio»** y **«Frecuencia
+  final»**: dos pantallas iguales para dos cosas distintas es una pantalla
+  que no dice nada.
+- **Ahora arranca solo** al dar la frecuencia final. Antes abría todavía
+  una tercera pregunta —en qué modo escuchar— y había que ir a MEM y tocar
+  SCAN para que empezara. Se barre en el modo que tengas puesto.
+- **El botón SCAN del banco Scanner vuelve a hacer lo de siempre**, barrer
+  sus memorias. Le había puesto un atajo para que arrancara el tramo, y
+  dos cosas distintas con el mismo botón es como se pierde la cuenta de
+  qué hace cada cual.
+- **Y al encontrar una emisora se queda tres segundos y sigue**, haya
+  alguien hablando todavía o no. Antes usaba la regla del barrido de
+  memorias —seguir cuando el canal lleve dos segundos y medio callado—, y
+  con esa regla **una portadora permanente para el barrido para siempre**
+  y el resto del tramo no se mira nunca. Un tramo son cientos de puntos y
+  lo que se busca es saber qué hay, no escucharlo: lo que quieras oír ya
+  está apuntado y se vuelve con un toque.
+
+**La flash sube 68 bytes** (488.456, quedan 3.064 libres).
+
+### What's new
+
+**The scanner, fixed with the radio in hand.** Four things that were wrong
+in V6.73, reported while trying it:
+
+- **The keypad asked for the frequency twice and both times said
+  "Frequency".** It now says **"Start frequency"** and **"End
+  frequency"**: two identical screens for two different things is a screen
+  that says nothing.
+- **It now starts by itself** once you give the end frequency. Before, it
+  still asked a third question —which mode to listen in— and you had to go
+  to MEM and tap SCAN to get it going. It sweeps in whichever mode you
+  have set.
+- **The Scanner bank's SCAN button does what it always did** again, sweep
+  its memories. I had wired it as a shortcut to start the range sweep, and
+  two different things on one button is how you lose track of what each
+  one does.
+- **And on finding a station it stays three seconds and moves on**,
+  whether or not anyone is still talking. It used the memory scan's rule —
+  carry on once the channel has been quiet for two and a half seconds —
+  and under that rule **a permanent carrier stops the sweep for good** and
+  the rest of the range is never looked at. A range is hundreds of points
+  and the point is to find out what is there, not to listen to it:
+  whatever you want to hear is already noted and one tap away.
+
+**Flash grows by 68 bytes** (488,456, leaving 3,064 free).
+
+---
+
+## V6.73 · 2026-11-11
+
+### Qué cambia
+
+**Un modo nuevo: SCAN, el escáner de tramo.**
+
+- Pedido por un usuario: fijar un rango, un paso, y que la radio lo
+  recorra sola, se pare donde haya alguien y **lo apunte**.
+- Está en **Modos → Analógico → SCAN**. Al tocarlo salen tres preguntas
+  seguidas: **frecuencia de inicio**, **frecuencia final** y **en qué modo
+  escuchar**. Al elegir el modo arranca.
+- **El paso es el del mando**, el que ya tengas puesto —12,5 kHz en
+  marina, 5 en repetidores, 25 en PMR—. Ni una fila más que aprender.
+- Se para donde hay alguien, suena el pip, y lo escribe en el **banco
+  Scanner**, que es el cuarto de la ventana MEM —antes se llamaba
+  «Repetidores»—. Si esa frecuencia ya estaba apuntada **sube su
+  contador** en vez de ocupar otra celda, así que una tarde de barrido
+  deja las quince **ordenadas por uso**. Cuando el canal lleva dos
+  segundos y medio callado sigue solo, igual que el barrido de memorias.
+- **MEM lo para y la radio se queda donde esté**, con `MEM.CSV` ya
+  escrito. Si el banco se llena pisa la que menos veces haya oído **de
+  las suyas**: una memoria que hayas grabado tú no la toca nunca.
+- El tramo puesto se ve en la celda SCAN de ese banco.
+
+**Y 3.360 bytes de flash, que es lo que hacía falta para que cupiera.** La
+FPU de este chip es de precisión **simple**, así que cada `double` lo hacía
+una rutina por software —y basta un `1.0` sin la `f` para arrastrar la
+familia entera—. Once módulos convertidos a entero o a float. No es un
+sacrificio: el cálculo del NCO sale **más exacto** que antes, y la fecha
+del RDS se comprobó valor a valor sobre los 115.993 que caben en la trama.
+
+**La flash baja 2.000 bytes** (488.388, quedan **3.132 libres**).
+
+### What's new
+
+**A new mode: SCAN, the band scanner.**
+
+- Requested by a user: set a range and a step, and have the radio sweep it
+  on its own, stop where someone is there, and **write it down**.
+- It lives in **Modes → Analogue → SCAN**. Tapping it asks three things in
+  a row: **start frequency**, **end frequency** and **which mode to listen
+  in**. Choosing the mode starts it.
+- **The step is the tuning knob's**, whichever you already have set —
+  12.5 kHz for marine, 5 for repeaters, 25 for PMR. Nothing extra to
+  learn.
+- It stops where someone is there, beeps, and writes it into the
+  **Scanner bank**, the fourth one in the MEM window — it used to be
+  called "Repeaters". If that frequency was already noted it **bumps its
+  counter** instead of taking another cell, so an afternoon of scanning
+  leaves the fifteen **sorted by use**. Once the channel has been quiet
+  for two and a half seconds it carries on, just like the memory scan.
+- **MEM stops it and the radio stays where it is**, with `MEM.CSV` already
+  written. If the bank fills up it overwrites the least-heard **of its
+  own**: a memory you saved yourself is never touched.
+- The range in force is shown in that bank's SCAN cell.
+
+**And 3,360 bytes of flash, which is what it took to fit.** This chip's FPU
+is **single** precision, so every `double` was done by a software routine —
+and a bare `1.0` without the `f` is enough to drag in the whole family.
+Eleven modules moved to integer or float. It is not a trade-off: the NCO
+calculation comes out **more exact** than before, and the RDS date was
+checked value by value across all 115,993 that fit in the frame.
+
+**Flash drops 2,000 bytes** (488,388, leaving **3,132 free**).
+
+---
+
 ## V6.72 · 2026-11-11
 
 ### Qué cambia

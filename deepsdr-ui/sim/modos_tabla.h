@@ -8,7 +8,7 @@ static const char *const k_modo_fam_nombres[MODO_TABLA_FAMS][MODO_TABLA_IDIOMAS]
     { "Aeronáutica", "Aeronautical" },
 };
 
-#define MODO_TABLA_N 29
+#define MODO_TABLA_N 30
 static const struct { const char *label;
                      const char *desc[MODO_TABLA_IDIOMAS]; int fam;
                      const char *demod; }
@@ -21,6 +21,7 @@ static const struct { const char *label;
     { "LSB", { "Banda lateral baja", "Lower sideband" }, 0, "DEMOD_MODE_LSB" },
     { "NFM", { "FM estrecha", "Narrow FM" }, 0, "DEMOD_MODE_NFM" },
     { "WFM", { "FM ancha", "Wide FM" }, 0, "DEMOD_MODE_WFM" },
+    { "SCAN", { "Escáner de tramo", "Band scanner" }, 0, "DEMOD_MODE_NFM" },
     { "CW", { "Telegrafía Morse", "Morse telegraphy" }, 1, "DEMOD_MODE_USB" },
     { "RTTY-L", { "Teletipo en LSB", "Teletype on LSB" }, 1, "DEMOD_MODE_LSB" },
     { "RTTY-U", { "Teletipo en USB", "Teletype on USB" }, 1, "DEMOD_MODE_USB" },

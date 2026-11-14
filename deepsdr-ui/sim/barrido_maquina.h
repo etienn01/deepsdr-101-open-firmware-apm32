@@ -33,15 +33,25 @@ static uint8_t mem_hay_senal(uint8_t c, uint8_t sube_ok)
     if (demod_am_get_mode() == DEMOD_MODE_WFM) {
         return (uint8_t)(s_scan_pico < SCAN_WFM_RUIDO_DB);
     }
-    if (c >= BANCO_MEM_N) { return 0U; }
+    /*
+     * El suelo sale de un sitio o de otro, pero la cuenta es LA MISMA: con
+     * el rango hay un solo suelo movil y con el banco uno por memoria. Se
+     * coge la direccion y se sigue igual, que es mejor que dos copias de
+     * tres lineas que un dia se separan. Ver s_rng_piso.
+     */
+    {
+        float *piso = s_rng_on ? &s_rng_piso : &s_scan_piso[c];
 
-    /* Baja de golpe y sube a cuentagotas, los dos con el mismo minimo:
-     * el suelo no puede quedar por encima de lo mas callado que se acaba
-     * de oir aqui. */
-    sube = sube_ok ? (s_scan_piso[c] + SCAN_PISO_SUBE_DB) : s_scan_piso[c];
-    s_scan_piso[c] = (s_scan_valle < sube) ? s_scan_valle : sube;
+        if (!s_rng_on && c >= BANCO_MEM_N) { return 0U; }
 
-    return (uint8_t)(s_scan_pico >= (s_scan_piso[c] + SCAN_MARGEN_DB));
+        /* Baja de golpe y sube a cuentagotas, los dos con el mismo minimo:
+         * el suelo no puede quedar por encima de lo mas callado que se acaba
+         * de oir aqui. */
+        sube = sube_ok ? (*piso + SCAN_PISO_SUBE_DB) : *piso;
+        *piso = (s_scan_valle < sube) ? s_scan_valle : sube;
+
+        return (uint8_t)(s_scan_pico >= (*piso + SCAN_MARGEN_DB));
+    }
 }
 
 static void scan_ventana(uint32_t espera_ms)
@@ -54,21 +64,46 @@ static void scan_ventana(uint32_t espera_ms)
 
 static void mem_scan_para(void)
 {
+    uint8_t era_rango = s_rng_on;
+
     if (!s_scan_on) { return; }
     s_scan_on      = 0U;
+    s_rng_on       = 0U;
     s_scan_para_en = 0U;
     /* Y se apaga la medida del nivel, que solo existe para esto: ver
      * demod_am_set_nivel_medir(), y por que importa apagarla. */
     demod_am_set_nivel_medir(0U);
+    /*
+     * Y AQUI ES DONDE SE GUARDA MEM.CSV, no en cada hallazgo.
+     *
+     * Escribir el fichero son dos borrados de 4 kB por un bus a patadas,
+     * y un barrido de tramo puede encontrar algo cada pocos segundos: a
+     * cada hallazgo serian parones continuos y desgaste de la flash para
+     * nada, porque hasta que no se para el barrido nadie va a mirar la
+     * lista. Al parar se escribe una vez y ya esta.
+     *
+     * LA RADIO SE QUEDA DONDE ESTE: no se recupera la frecuencia de antes
+     * de entrar en el escaner. Si el barrido se para es porque has tocado
+     * MEM mientras se oia algo, o sea que lo que quieres es quedarte ahi.
+     *
+     * El buffer se lo presta s_gsv_buf, igual que mem_graba(): ver el
+     * contrato en banco.h.
+     */
+    if (era_rango) {
+        (void)banco_guarda((char *)s_gsv_buf, (uint32_t)sizeof s_gsv_buf);
+    }
     mem_boton_repinta();
     mem_rejilla_repinta();
 }
 
 static void mem_scan_salta(void)
 {
-    uint8_t sig = banco_siguiente(s_scan_banco, s_scan_mem);
+    uint8_t sig;
     uint8_t rehace;
 
+    if (s_rng_on) { rng_scan_salta(); return; }
+
+    sig = banco_siguiente(s_scan_banco, s_scan_mem);
     if (sig == 0xFFU) { mem_scan_para(); return; }
     s_scan_mem     = sig;
     s_scan_para_en = 0U;
@@ -92,6 +127,14 @@ static void mem_scan_salta(void)
 static void mem_scan_conmuta(uint8_t bk)
 {
     if (s_scan_on && s_scan_banco == bk) { mem_scan_para(); return; }
+    /*
+     * LA CELDA SCAN DEL BANCO SCANNER HACE LO DE SIEMPRE - 11/11/2026,
+     * dicho por el dueno. Aqui hubo un rato en que ese banco, si tenia un
+     * tramo fijado, barria EL TRAMO en vez de sus memorias. Era un atajo
+     * y estaba mal: esa celda barre memorias en los cuatro bancos, y el
+     * tramo se arranca desde su propio modo. Dos cosas distintas con el
+     * mismo boton es como se pierde la cuenta de lo que hace cada cual.
+     */
     if (banco_usadas(bk) == 0U) {
         /* Un banco vacio no se barre, y se dice con el pip de "no ha
          * podido ser" en vez de no hacer nada: un boton que no responde se
@@ -177,7 +220,27 @@ static void mem_scan_poll(void)
          * cada vuelta del bucle. Una voz tiene pausas, asi que preguntar
          * una sola vez al final se perderia media emisora. */
         scan_mira();
-        if (t < (uint32_t)(s_scan_espera + SCAN_MIRA_MS)) { return; }
+        /* El tramo mira menos: ver SCAN_RNG_MIRA_MS y la medida del
+         * asentamiento que hay delante. */
+        if (t < (uint32_t)(s_scan_espera
+                           + (s_rng_on ? SCAN_RNG_MIRA_MS : SCAN_MIRA_MS))) {
+            return;
+        }
+    }
+
+    /*
+     * EL TRAMO SE QUEDA UN RATO FIJO Y SIGUE, haya o no haya todavia
+     * alguien hablando. Ver SCAN_RNG_PARADA_MS: con la regla del banco
+     * -seguir cuando el canal lleve callado de seguido- una portadora
+     * permanente para el barrido para siempre.
+     *
+     * Va ANTES de medir a proposito: lo que decida la ventana de ahora ya
+     * no cambia nada, el rato se ha cumplido y toca saltar.
+     */
+    if (s_rng_on && s_scan_para_en
+        && (uint32_t)(g_msticks - s_scan_oida_ms) >= SCAN_RNG_PARADA_MS) {
+        mem_scan_salta();
+        return;
     }
 
     /* Vigilando, el suelo no puede subir: ver mem_hay_senal(). */
@@ -190,10 +253,27 @@ static void mem_scan_poll(void)
              * repinta aqui: la rejilla solo se repintaba en los saltos, y
              * quedarse ya no es un salto. */
             s_scan_para_en = 1U;
+            /* Y si lo que corre es el barrido del tramo, aqui es donde se
+             * apunta: una vez por emisora, no una por ventana. Ver
+             * rng_apunta(). */
+            if (s_rng_on) { rng_apunta(); }
+            /* El reloj de la parada empieza AQUI, en el instante de
+             * pararse, y no se vuelve a tocar: ver SCAN_RNG_PARADA_MS y
+             * el comentario de mas abajo. En el banco esta misma variable
+             * se pone al dia en cada ventana y significa otra cosa. */
+            s_scan_oida_ms = g_msticks;
             bip_listo();
             mem_rejilla_repinta();
         }
-        s_scan_oida_ms = g_msticks;
+        /*
+         * En el banco, esto es "la ultima vez que se oyo algo" y se pone
+         * al dia en cada ventana: de ahi sale el hueco entre dos frases.
+         * En el tramo es "CUANDO ME PARE" y NO se toca mas, porque lo que
+         * se cuenta es el rato que lleva parado, no el silencio. Es la
+         * misma variable con dos sentidos, y se dice aqui para que nadie
+         * la ponga al dia en el tramo sin querer.
+         */
+        if (!s_rng_on) { s_scan_oida_ms = g_msticks; }
         /* Y se sigue vigilando el mismo canal: otra ventana aqui mismo,
          * sin espera, que la cadena no se ha movido. */
         scan_ventana(0U);

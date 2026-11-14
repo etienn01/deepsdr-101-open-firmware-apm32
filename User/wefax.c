@@ -430,13 +430,30 @@ static volatile float    s_apt300, s_apt450;
  */
 static uint32_t reloj_calcula_i(uint8_t lpm_i, float ppm)
 {
-    double lps;
+    uint64_t den;
+    uint32_t base;
 
     if (s_fs <= 0.0f) { return s_inc; }
     if (lpm_i >= WEFAX_LPM_N) { return s_inc; }
-    /* Una vuelta del acumulador por linea. lineas/s = lpm/60. */
-    lps = (double)k_lpm[lpm_i] / 60.0 * (1.0 + (double)ppm * 1e-6);
-    return (uint32_t)(lps / (double)s_fs * 4294967296.0 + 0.5);
+    /*
+     * Una vuelta del acumulador por linea. lineas/s = lpm/60, y el
+     * incremento es lineas/s dividido por Fs, en la rejilla de 2^32.
+     *
+     * EN ENTERO DESDE EL 11/11/2026, y de paso MAS exacto que el double
+     * que habia: lpm, 60 y Fs son enteros, asi que (lpm << 32)/(60*Fs) es
+     * el cociente de verdad redondeado y no una representacion de el.
+     * El double costaba las rutinas por software de libgcc -la FPU de
+     * este chip es de precision simple-.
+     *
+     * La correccion de ppm se aplica DESPUES y sobre el incremento ya
+     * hecho, que es donde tiene sentido: son partes por millon de ese
+     * numero. Va en float porque es una correccion pequena y el error de
+     * redondeo de un float sobre ella es de partes por millon de una
+     * parte por millon.
+     */
+    den  = 60ULL * (uint64_t)(uint32_t)(s_fs + 0.5f);
+    base = (uint32_t)((((uint64_t)k_lpm[lpm_i] << 32) + den / 2ULL) / den);
+    return (uint32_t)((int32_t)base + (int32_t)((float)base * ppm * 1e-6f));
 }
 
 static uint32_t reloj_calcula(float ppm)

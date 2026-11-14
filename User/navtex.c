@@ -341,7 +341,7 @@ void navtex_start(float fs_hz)
     s_smi = s_smq = s_sei = s_seq = 0.0f;
 
     s_fase = 0U;
-    s_inc_nom = (uint32_t)((double)NAVTEX_BAUD / (double)fs_hz * 4294967296.0 + 0.5);
+    s_inc_nom = nco_inc_de((float)NAVTEX_BAUD, fs_hz);
     s_inc = s_inc_nom;
     s_err_int = 0.0f;
     s_d_medio = s_d_ant = 0.0f;

@@ -2148,8 +2148,8 @@ static void apunta_trama(const uint8_t *datos, uint32_t largo)
                 uint8_t c2;
                 if (!varios) { s_pos++; }
                 s_pos_sin_crc++;
-                ev.lat_e4 = (int32_t)(pdx.location.lat * 10000.0);
-                ev.lon_e4 = (int32_t)(pdx.location.lon * 10000.0);
+                ev.lat_e4 = (int32_t)(pdx.location.lat * 10000.0f);
+                ev.lon_e4 = (int32_t)(pdx.location.lon * 10000.0f);
                 ev.flags |= (uint8_t)(HFDL_AC_EV_POS | HFDL_AC_EV_PERF);
                 for (c2 = 0U; c2 < 6U; c2++) { ev.flight[c2] = pdx.flight_id[c2]; }
                 ev.flight[6] = '\0';
@@ -2182,8 +2182,8 @@ static void apunta_trama(const uint8_t *datos, uint32_t largo)
                 uint8_t cl;
                 if (!varios) { s_pos++; }
                 s_d1_vistos++;
-                ev.lat_e4 = (int32_t)(pd.location.lat * 10000.0);
-                ev.lon_e4 = (int32_t)(pd.location.lon * 10000.0);
+                ev.lat_e4 = (int32_t)(pd.location.lat * 10000.0f);
+                ev.lon_e4 = (int32_t)(pd.location.lon * 10000.0f);
                 ev.flags |= (uint8_t)(HFDL_AC_EV_POS | HFDL_AC_EV_PERF);
                 for (cl = 0U; cl < 6U; cl++) { ev.flight[cl] = pd.flight_id[cl]; }
                 ev.flight[6] = '\0';
@@ -2230,8 +2230,8 @@ static void apunta_trama(const uint8_t *datos, uint32_t largo)
 
                 if (!varios) { s_pos++; }
 
-                ev.lat_e4 = (int32_t)(pd.location.lat * 10000.0);
-                ev.lon_e4 = (int32_t)(pd.location.lon * 10000.0);
+                ev.lat_e4 = (int32_t)(pd.location.lat * 10000.0f);
+                ev.lon_e4 = (int32_t)(pd.location.lon * 10000.0f);
                 ev.flags |= (uint8_t)(HFDL_AC_EV_POS | HFDL_AC_EV_PERF);
                 for (c = 0U; c < 6U; c++) { ev.flight[c] = pd.flight_id[c]; }
                 ev.flight[6] = '\0';

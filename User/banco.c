@@ -206,6 +206,89 @@ uint8_t banco_usadas(uint8_t b)
     return n;
 }
 
+/*
+ * ======================================================================
+ * LO QUE NECESITA EL BARRIDO DE RANGO - 11/11/2026.
+ * ======================================================================
+ *
+ * Dos preguntas, y las dos tienen que contestarse DESDE AQUI y no desde
+ * main.c recorriendo s_mem[] por su cuenta: la tabla es de este modulo y
+ * el dia que deje de ser un array plano -o que las memorias se ordenen-
+ * un bucle escrito fuera se queda mirando a otro sitio.
+ *
+ * banco_busca_hz() no compara con ==. El barrido vuelve a pasar por la
+ * misma emisora por el mismo paso, pero el dial no cae siempre en el
+ * mismo hercio: entre dos vueltas puede haber un paso de diferencia si el
+ * rango no es multiplo exacto del paso, y una emisora ancha responde en
+ * dos puntos contiguos. Con == saldrian dos celdas para la misma emisora
+ * y las quince se llenarian de duplicados en una tarde. Asi que se
+ * comparan con una TOLERANCIA que pone quien llama, que es el unico que
+ * sabe el paso con el que esta barriendo.
+ */
+uint8_t banco_busca_hz(uint8_t b, uint32_t hz, uint32_t tol_hz)
+{
+    uint8_t i;
+
+    if (b >= BANCO_N || hz == 0UL) { return 0xFFU; }
+    for (i = 0U; i < BANCO_MEM_N; i++) {
+        uint32_t f = s_mem[b][i].hz;
+        uint32_t d;
+
+        if (f == 0UL) { continue; }
+        d = (f > hz) ? (f - hz) : (hz - f);
+        if (d <= tol_hz) { return i; }
+    }
+    return 0xFFU;
+}
+
+/*
+ * La primera celda libre, o 0xFF si el banco esta lleno. El barrido la
+ * pide para apuntar un hallazgo nuevo; que devuelva 0xFF con el banco
+ * lleno NO es un error que haya que tapar aqui: quien llama decide si
+ * deja de apuntar o si pisa la menos oida, y eso es una politica, no una
+ * propiedad de la tabla.
+ */
+uint8_t banco_libre(uint8_t b)
+{
+    uint8_t i;
+
+    if (b >= BANCO_N) { return 0xFFU; }
+    for (i = 0U; i < BANCO_MEM_N; i++) {
+        if (s_mem[b][i].hz == 0UL) { return i; }
+    }
+    return 0xFFU;
+}
+
+/*
+ * Y la menos oida de las que puso el barrido, para cuando el banco se
+ * llena. Solo mira las que tienen vistas != 0: una memoria grabada A MANO
+ * no la pisa el barrido jamas, porque esa la puso el usuario y el barrido
+ * no tiene ningun derecho sobre ella. Si todas son a mano, 0xFF y el
+ * barrido deja de apuntar.
+ */
+uint8_t banco_menos_oida(uint8_t b)
+{
+    uint8_t i, mejor = 0xFFU;
+    uint16_t min = 0xFFFFU;
+
+    if (b >= BANCO_N) { return 0xFFU; }
+    for (i = 0U; i < BANCO_MEM_N; i++) {
+        if (s_mem[b][i].hz == 0UL)      { continue; }
+        if (s_mem[b][i].vistas == 0U)   { continue; }   /* a mano: no se toca */
+        if (s_mem[b][i].vistas < min) { min = s_mem[b][i].vistas; mejor = i; }
+    }
+    return mejor;
+}
+
+/* Sube el contador de una memoria sin tocar nada mas. Se queda clavado en
+ * 65535: una emisora muy oida no tiene por que dar la vuelta a cero y
+ * parecer nueva. */
+void banco_vista(uint8_t b, uint8_t i)
+{
+    if (b >= BANCO_N || i >= BANCO_MEM_N) { return; }
+    if (s_mem[b][i].vistas < 0xFFFFU) { s_mem[b][i].vistas++; }
+}
+
 uint8_t banco_siguiente(uint8_t b, uint8_t desde)
 {
     uint8_t k, i;
@@ -262,7 +345,7 @@ uint32_t banco_a_csv(char *buf, uint32_t cap)
      * que es media razon de que esto sea un CSV y no un binario.
      */
     pos = pon_s(buf, cap, pos,
-                "banco,memoria,hz,modo,paso_hz,fil_lo,fil_hi,cw\n");
+                "banco,memoria,hz,modo,paso_hz,fil_lo,fil_hi,cw,vistas\n");
     /* El renglon de ayuda de los nombres, si main.c lo ha dado. */
     if (s_pista != 0 && s_pista[0] != '\0') {
         pos = pon_s(buf, cap, pos, "# ");
@@ -313,6 +396,12 @@ uint32_t banco_a_csv(char *buf, uint32_t cap)
             pos = pon_u32(buf, cap, pos, (uint32_t)m->fil_hi);
             pos = pon_c  (buf, cap, pos, ',');
             pos = pon_u32(buf, cap, pos, (uint32_t)m->cw);
+            pos = pon_c  (buf, cap, pos, ',');
+            /* Y las veces que el barrido la ha oido. Va la ULTIMA a
+             * proposito: el lector usa guardas `nc > n`, asi que una
+             * columna al final la ignora sin enterarse un firmware
+             * anterior, y un MEM.CSV viejo se sigue leyendo entero. */
+            pos = pon_u32(buf, cap, pos, (uint32_t)m->vistas);
             pos = pon_c  (buf, cap, pos, '\n');
         }
     }
@@ -329,7 +418,7 @@ uint8_t banco_de_csv(const char *buf, uint32_t len)
 
     while (pos < len) {
         uint32_t ini = pos, fin;
-        uint32_t campo[8];
+        uint32_t campo[9];
         uint8_t  nc = 0U;
         uint32_t k;
 
@@ -379,7 +468,7 @@ uint8_t banco_de_csv(const char *buf, uint32_t len)
         /* La cabecera y cualquier renglon que no empiece por una cifra. */
         if (buf[ini] < '0' || buf[ini] > '9') { continue; }
 
-        for (k = ini; k < fin && nc < 8U; ) {
+        for (k = ini; k < fin && nc < 9U; ) {
             uint32_t v = 0UL;
             uint8_t  hay = 0U;
 
@@ -409,6 +498,10 @@ uint8_t banco_de_csv(const char *buf, uint32_t len)
             m.fil_lo = (nc > 5U) ? (uint16_t)campo[5] : 0U;
             m.fil_hi = (nc > 6U) ? (uint16_t)campo[6] : 0U;
             m.cw     = (nc > 7U) ? (uint16_t)campo[7] : 0U;
+            /* Un fichero de antes del 11/11/2026 no trae esta columna:
+             * queda a cero, que es justo lo que significa "no la encontro
+             * el barrido". Ver banco_mem_t en banco.h. */
+            m.vistas = (nc > 8U) ? (uint16_t)((campo[8] > 65535UL) ? 65535UL : campo[8]) : 0U;
             s_mem[b][i] = m;
             leidas++;
         }
@@ -420,9 +513,10 @@ uint8_t banco_de_csv(const char *buf, uint32_t len)
  * EL BUFFER DEL FICHERO LO PONE QUIEN LLAMA, Y AQUI ESTA EL PORQUE.
  *
  * EL TAMAÑO: el renglon mas largo posible son
- * "4,15,399999999,99,99,65535,65535,65535\n", 39 caracteres. Sesenta de
- * esos mas la cabecera son 2.383, y con 60 memorias de verdad se han
- * medido 1.707. Hace falta BANCO_CSV_MIN y no mas.
+ * "4,15,399999999,99,99,65535,65535,65535,65535\n", 45 caracteres desde que
+ * el 11/11/2026 entro la columna de veces vistas (antes eran 39). Sesenta
+ * de esos mas la cabecera y los cuatro nombres son 2.845. Hace falta
+ * BANCO_CSV_MIN y no mas.
  *
  * EL SITIO: ni propio ni de la union compartida.
  *

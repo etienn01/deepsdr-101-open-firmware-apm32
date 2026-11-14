@@ -136,6 +136,18 @@ def main(ruta):
     # saltos de linea convertidos en espacios. De paso admite un campo
     # suelto DETRAS de MODO_FAM_* -el sam_banda de las dos filas de SAM-,
     # que era el segundo motivo por el que esas dos no entraban.
+    #
+    # Y LA CUARTA VEZ, 11/11/2026. "UN campo suelto detras" se escribio
+    # como [^},]*, o sea un campo Y NO MAS, porque entonces no habia mas.
+    # Al entrar la fila del escaner de tramo -que lleva sam_banda Y el
+    # interruptor escan detras de MODO_FAM_*- esa fila dejo de reconocerse
+    # y la cuenta dijo "MODO_FAM_ANA 8 de 16" con NUEVE dentro. Otra vez el
+    # mismo fallo y otra vez a medias: un numero, y el numero mentira.
+    #
+    # La causa de fondo es la misma las cuatro veces: la expresion fijaba
+    # CUANTOS campos hay en vez de donde empiezan y donde acaban. Ahora la
+    # cola es [^}]* -todo lo que quede hasta la llave, haya lo que haya-,
+    # asi que el campo diecinueve no tendra que tocar esto.
     def por_entradas(cuerpo):
         trozo, hondo = '', 0
         for ch in cuerpo:
@@ -156,7 +168,7 @@ def main(ruta):
     for linea in por_entradas(m.group(1)):
         f = re.match(r'\s*\{\s*' + TXT + r'\s*,\s*' + TXT + r'\s*,'
                      r'\s*(\w+)\s*,\s*(\w+)\s*,'
-                     r'\s*((?:\w+\s*,\s*)+?)(MODO_FAM_\w+)\s*(?:,\s*([^},]*))?\s*\}',
+                     r'\s*((?:\w+\s*,\s*)+?)(MODO_FAM_\w+)\s*(?:,\s*([^}]*))?\s*\}',
                      linea)
         if f:
             (e_es, e_en, e_1, d_es, d_en, d_1,
