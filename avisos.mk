@@ -237,8 +237,10 @@ CALIENTES = demod_am.o nr_ss.o anotch.o audiofil.o sam.o disc_fm.o nco.o \
 # iqbal.c (14/11/2026), APM32 build only: its mirror FIR runs in the DMA interrupt on every raw sample and, once
 # enabled, took 10 % of the CPU at 192 kHz. -O2 gives bit-identical samples (checked on the QEMU Cortex-M4F rig,
 # 9,000 blocks over its three paths) for 200 more bytes, which the GD32's flash is kept from.
+# spectrum.c (14/11/2026), APM32 build only: compon(), which builds every row of the panadapter, was the largest
+# single user of the CPU at 192 kHz (12-14 %); at -O2 the radio went from 26 to 28 frames a second, for 1,168 bytes.
 ifneq (,$(findstring CHIP_APM32F407,$(DEFS_EXTRA)))
-CALIENTES += iqbal.o
+CALIENTES += iqbal.o spectrum.o
 endif
 
 

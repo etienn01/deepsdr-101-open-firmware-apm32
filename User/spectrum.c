@@ -1371,6 +1371,17 @@ static void encima(uint16_t *px, int16_t sx, int16_t sy, int16_t sw, int16_t sh)
     s_encima_fn(&s);
 }
 
+/*
+ * APM32 build: the fill loop below runs one to four times per column and band (bands of four rows there), and its
+ * own count and branch cost more than the pixel it writes: 42 % of compon(), profiled on the radio. Unrolled by four
+ * it writes the same pixels. The GD32 keeps the loop as it is, for flash.
+ */
+#ifdef CHIP_APM32F407
+#define RELLENO_DESENROLLA _Pragma("GCC unroll 4")
+#else
+#define RELLENO_DESENROLLA
+#endif
+
 static void compon(uint16_t *dst, uint32_t stride, uint16_t row, uint16_t nf,
                    uint16_t c0, uint16_t c1)
 {
@@ -1526,6 +1537,7 @@ static void compon(uint16_t *dst, uint32_t stride, uint16_t row, uint16_t nf,
                          * pixel contra la referencia grabada.
                          */
                         uint32_t n = (uint32_t)(rb - ra) + 1U;
+                        RELLENO_DESENROLLA
                         do {
                             *pb = *pc++;
                             pb += stride;
