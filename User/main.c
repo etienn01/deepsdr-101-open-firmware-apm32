@@ -40493,7 +40493,12 @@ static void sdr_spectrum_waterfall_tick(void)
              * SAME winning shift before trusting it as a real,
              * physical misalignment - one capture proves nothing
              * either way.
+             *
+             * 14/11/2026: debug builds only, like the snapshot itself -
+             * everything below only ends up in debug_print*(). See
+             * s_ferr_snapshot in sdr_rx.c.
              */
+#if DEBUG_UART_ENABLED
             {
                 static int16_t s_snap_i[64];
                 static int16_t s_snap_q[64];
@@ -40564,6 +40569,7 @@ static void sdr_spectrum_waterfall_tick(void)
                     }
                 }
             }
+#endif /* DEBUG_UART_ENABLED */
         }
     }
 }

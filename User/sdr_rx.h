@@ -225,6 +225,7 @@ uint8_t sdr_rx_last_block_corrupted(void);
  * en sdr_rx.c y el banco sim/corrupto.c.
  */
 uint8_t sdr_rx_bloque_corrupto(const int16_t *iq, uint32_t n_muestras);
+/* Debug builds only (DEBUG_UART_ENABLED): see s_ferr_snapshot in sdr_rx.c. */
 uint8_t sdr_rx_get_ferr_snapshot(int16_t *i_out, int16_t *q_out, uint32_t n);
 
 /*

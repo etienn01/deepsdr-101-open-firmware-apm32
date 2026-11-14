@@ -730,6 +730,16 @@ void sdr_rx_cuentas_cero(void)
 
 /* La regla del bloque corrupto vive en User/rx_corrupto.c, fuera de esta
  * interrupcion, para que el simulador pueda medirla. Ver alla el porque. */
+
+/*
+ * DEBUG BUILDS ONLY - 14/11/2026. The snapshot's only reader is main.c's
+ * I/Q cross-correlation, whose only output is debug_print*(), and those
+ * are ((void)0) without DEBUG_UART_ENABLED (see debug_uart.h). In a
+ * release build this was 256 bytes of RAM, here and in main.c each, and a
+ * copy in this ISR, all for nothing. A DEBUG_UART_ENABLED=1 build still
+ * has all of it, unchanged.
+ */
+#if DEBUG_UART_ENABLED
 static int16_t s_ferr_snapshot[SDR_RX_FERR_SNAPSHOT_FRAMES * 2U];
 static volatile uint8_t s_ferr_snapshot_ready = 0U;
 
@@ -750,6 +760,7 @@ uint8_t sdr_rx_get_ferr_snapshot(int16_t *i_out, int16_t *q_out, uint32_t n)
     s_ferr_snapshot_ready = 0U; /* consumed - next FERR can capture again */
     return 1U;
 }
+#endif /* DEBUG_UART_ENABLED */
 
 void DMA0_Channel3_IRQHandler(void)
 {
@@ -890,6 +901,7 @@ void DMA0_Channel3_IRQHandler(void)
         }
     }
 
+#if DEBUG_UART_ENABLED
     if ((half != 0) && (ferr_this_block != 0U) && (s_ferr_snapshot_ready == 0U)) {
         uint32_t k;
         uint32_t n = SDR_RX_FERR_SNAPSHOT_FRAMES;
@@ -901,6 +913,9 @@ void DMA0_Channel3_IRQHandler(void)
         }
         s_ferr_snapshot_ready = 1U;
     }
+#else
+    (void)ferr_this_block;   /* only feeds the snapshot, see s_ferr_snapshot */
+#endif
 
     /*
      * *** 05/08/2026, REPLACED after a second real regression *** -
