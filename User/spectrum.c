@@ -843,7 +843,28 @@ static uint16_t color_pico(void)
 #define TCMRAM_BSS
 #endif
 
+#ifdef CHIP_APM32F407
+/*
+ * APM32 build: the smoothed dB per column is kept in 1/64 dB steps in an int16 (range -512..+512 dB) instead of a
+ * float, 1.6 kB of TCM back. A pixel of the trace is 0.15 dB or more, ten times a step; what the rounding changes is
+ * that the slow decay stops 2/64 dB short of a steady level instead of creeping on, which can move a column by one
+ * pixel now and then.
+ */
+#define COL_EMA_PASOS 64.0f
+static int16_t  s_col_ema[SPEC_MAX_W] TCMRAM_BSS;   /* smoothed dB per column, 1/64 dB */
+static float col_ema_lee(uint32_t col) { return (float)s_col_ema[col] * (1.0f / COL_EMA_PASOS); }
+static void col_ema_pon(uint32_t col, float db)
+{
+    float q = db * COL_EMA_PASOS;
+    if (q >  32767.0f) { q =  32767.0f; }
+    if (q < -32768.0f) { q = -32768.0f; }
+    s_col_ema[col] = (int16_t)((q >= 0.0f) ? (q + 0.5f) : (q - 0.5f));
+}
+#else
 static float    s_col_ema[SPEC_MAX_W] TCMRAM_BSS;   /* smoothed dB per column      */
+#define col_ema_lee(col)     (s_col_ema[(col)])
+#define col_ema_pon(col, db) (s_col_ema[(col)] = (db))
+#endif
 
 /* ---------------------------------------------------------------------
  * LAS DOS PLANTILLAS DE FILA. 24/09/2026.
@@ -1613,7 +1634,7 @@ void spectrum_draw(const float *db, uint32_t n_bins,
      * would be meaningless. */
     if (w != s_prev_w) {
         for (col = 0; col < w; col++) {
-            s_col_ema[col] = db_min;
+            col_ema_pon(col, db_min);
 #if SPECTRUM_PEAK_HOLD
             s_col_peak[col] = db_min;
 #endif
@@ -1634,6 +1655,7 @@ void spectrum_draw(const float *db, uint32_t n_bins,
         uint32_t b1 = ((uint32_t)(col + 1U) * n_bins) / w;
         float v;
         float t;
+        float ema;
         uint32_t bi;
 
         if (b1 <= b0) {
@@ -1646,15 +1668,17 @@ void spectrum_draw(const float *db, uint32_t n_bins,
         v = v / (float)(b1 - b0);
 
         /* Fast attack, slow decay. */
-        if (v > s_col_ema[col]) {
-            s_col_ema[col] += SPECTRUM_EMA_ATTACK * (v - s_col_ema[col]);
+        ema = col_ema_lee(col);
+        if (v > ema) {
+            ema += SPECTRUM_EMA_ATTACK * (v - ema);
         } else {
-            s_col_ema[col] += SPECTRUM_EMA_DECAY * (v - s_col_ema[col]);
+            ema += SPECTRUM_EMA_DECAY * (v - ema);
         }
+        col_ema_pon(col, ema);
 
 #if SPECTRUM_PEAK_HOLD
-        if (s_col_ema[col] > s_col_peak[col]) {
-            s_col_peak[col] = s_col_ema[col];
+        if (ema > s_col_peak[col]) {
+            s_col_peak[col] = ema;
         } else {
             s_col_peak[col] -= SPECTRUM_PEAK_DECAY;
             if (s_col_peak[col] < db_min) {
@@ -1667,7 +1691,7 @@ void spectrum_draw(const float *db, uint32_t n_bins,
         s_peak_h[col] = (uint16_t)(t * (float)h);
 #endif
 
-        t = (s_col_ema[col] - db_min) * scale_t;
+        t = (ema - db_min) * scale_t;
         if (t < 0.0f) { t = 0.0f; }
         if (t > 1.0f) { t = 1.0f; }
         s_bar_h[col] = (uint8_t)(t * (float)h);
