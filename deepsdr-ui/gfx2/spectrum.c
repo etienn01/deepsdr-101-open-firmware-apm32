@@ -890,8 +890,6 @@ static uint16_t s_bar_h[SPEC_MAX_W] TCMRAM_BSS;     /* bar height, px from botto
 static uint16_t s_peak_h[SPEC_MAX_W] TCMRAM_BSS;    /* peak marker height          */
 #endif
 static uint8_t  s_bridge = 1U;   /* ver spectrum_set_bridge() */
-static uint16_t s_bar_lo[SPEC_MAX_W] TCMRAM_BSS;    /* vertical trace bridge to the left neighbor, low end - see Pass 1.6 */
-static uint16_t s_bar_hi[SPEC_MAX_W] TCMRAM_BSS;    /* vertical trace bridge to the left neighbor, high end - see Pass 1.6 */
 static uint16_t s_row_color[SPEC_MAX_H] TCMRAM_BSS; /* gradient fill color per row */
 static uint8_t  s_row_grid[SPEC_MAX_H] TCMRAM_BSS;  /* 1 = horizontal gridline on this row */
 static uint8_t  s_col_grid[SPEC_MAX_W] TCMRAM_BSS;  /* 1 = vertical gridline on this column - added 08/09/2026, see SPECTRUM_GRID_ROWS/COLS's comment in spectrum.h */
@@ -948,7 +946,41 @@ static struct {
     uint8_t  fill_enabled;
     uint8_t  traza_de_fila;
     uint8_t  hay;            /* 0 = todavia no se ha dibujado nada */
+    uint8_t  puente;         /* s_bridge when s_bar_h[] was last computed (Pass 1.6), see traza_puente() */
 } s_ult;
+
+/*
+ * THE TRACE'S JOIN WITH ITS LEFT NEIGHBOUR, worked out from s_bar_h[] when it is needed instead of being kept in
+ * two 800-entry tables (3,200 bytes of TCM). Column `col` draws its trace from height *lo to height *hi: its own
+ * bar height and, with the bridge on, the left neighbour's (column 0 has none). See Pass 1.6 in spectrum_draw().
+ *
+ * It gives exactly what the tables held, everywhere they were read: s_bar_h[] is only written by Pass 1 and 1.5,
+ * which always run right before Pass 1.6, and the bridge flag used is the one frozen in s_ult.puente by Pass 1.6,
+ * not the live s_bridge, so a spectrum_set_bridge() between the computation and a later read (the bands still to
+ * be built in this frame, or the screenshot's spectrum_pinta_en() long after) changes nothing until the next
+ * frame, as before.
+ *
+ * The one place the two could differ is past the width of the last computed frame, which only
+ * spectrum_pinta_en() could reach: after a frame aborted for lack of the band (a screenshot holds it) that was
+ * narrower than the last one drawn. Those columns were already left over from older frames. The firmware never
+ * gets there: its only narrowing is the 800-px scope -> the 756-px main panel, whose spectrum_pinta_en() call
+ * (x = 40 on an 800-px band) returns before reading anything because the 800-px s_ult.w does not fit.
+ */
+static inline void traza_puente(uint16_t col, uint8_t puente, uint16_t *lo, uint16_t *hi)
+{
+    uint16_t cur  = s_bar_h[col];
+    /* The left neighbour, or the column itself when there is none or the bridge is off (`puente` is 0 or 1).
+     * Indexed rather than branched: this runs for every column of every band. */
+    uint16_t left = s_bar_h[col - (uint16_t)((col != 0U) & puente)];
+
+    if (left < cur) {
+        *lo = left;
+        *hi = cur;
+    } else {
+        *lo = cur;
+        *hi = left;
+    }
+}
 
 /*
  * ===========================================================================
@@ -1195,22 +1227,26 @@ static void firmas_por_tramo(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
  * El techo de cada columna: la fila mas alta donde pinta algo que no sea
  * plantilla. h = esa columna no pinta nada.
  *
- * Mira las tres cosas que pueden subir: la traza (s_bar_hi, que ya incluye
- * el puente con la vecina), el relleno (s_bar_h) y el pico (s_peak_h). El
- * borde del filtro no cuenta: ya viene DENTRO de la plantilla.
+ * It looks at the three things that can rise: the trace (the top of its join
+ * with the left neighbour, see traza_puente()), the fill (s_bar_h) and the
+ * peak (s_peak_h). The passband edge does not count: it is already part of
+ * the template.
  *
  * El relleno empieza en h-bar_h+1, una fila MAS ABAJO, asi que usar h-bar_h
  * se pasa de prudente por una fila. Mejor eso que quedarse corto.
  */
 static void techos_por_tramo(uint16_t w, uint16_t h, uint8_t fill_enabled)
 {
+    const uint8_t puente = s_ult.puente;
     uint16_t col, t;
 
     s_n_tramos = (uint16_t)((w + SPEC_TRAMO - 1U) / SPEC_TRAMO);
     for (t = 0; t < s_n_tramos; t++) { s_tramo_techo[t] = h; }
     for (col = 0; col < w; col++) {
-        uint16_t alto = s_bar_hi[col];
+        uint16_t bajo, alto;
         uint16_t techo;
+
+        traza_puente(col, puente, &bajo, &alto);
 
         if (fill_enabled && (s_bar_h[col] > alto)) { alto = s_bar_h[col]; }
 #if SPECTRUM_PEAK_HOLD
@@ -1316,6 +1352,7 @@ static void compon(uint16_t *dst, uint32_t stride, uint16_t row, uint16_t nf,
     const uint8_t  fill_enabled = s_ult.fill_enabled;
     const uint16_t trace_color = s_ult.trace_color;
     const uint8_t  traza_de_fila = s_ult.traza_de_fila;
+    const uint8_t  puente = s_ult.puente;
 #if SPECTRUM_PEAK_HOLD
     /* El color del pico es invariante del cuadro entero -hace tema_claro() y,
      * con tema claro, pal565()- y se estaba evaluando dentro del bucle de
@@ -1407,13 +1444,13 @@ static void compon(uint16_t *dst, uint32_t stride, uint16_t row, uint16_t nf,
         for (; col <= fin; col++) {
             uint8_t  borde = (uint8_t)(band_active &&
                                        ((col == band_col_lo) || (col == band_col_hi)));
-            uint16_t lo = s_bar_lo[col];
-            uint16_t hi = s_bar_hi[col];
+            uint16_t lo, hi;
             uint16_t ra, rb;
 #if SPECTRUM_PEAK_HOLD
             uint16_t r;
 #endif
 
+            traza_puente(col, puente, &lo, &hi);
             if (!borde) {
 #if SPECTRUM_PEAK_HOLD
                 /* Prioridad 4: el punto del pico, una sola fila.
@@ -1681,18 +1718,12 @@ void spectrum_draw(const float *db, uint32_t n_bins,
      * with background showing through beneath it in the shorter
      * column, exactly like OUTLINE's contour, rather than a second
      * filled region.
+     *
+     * The join itself is no longer stored per column: traza_puente() works it out from s_bar_h[] wherever it is
+     * read. All that is kept from here is the bridge setting it has to use, frozen now -for this frame and for
+     * any screenshot taken before the next one- exactly as the two tables it replaces froze it.
      */
-    for (col = 0; col < w; col++) {
-        uint16_t left = (col == 0U || !s_bridge) ? s_bar_h[col] : s_bar_h[col - 1U];
-        uint16_t cur  = s_bar_h[col];
-        if (left < cur) {
-            s_bar_lo[col] = left;
-            s_bar_hi[col] = cur;
-        } else {
-            s_bar_lo[col] = cur;
-            s_bar_hi[col] = left;
-        }
-    }
+    s_ult.puente = s_bridge;
 
     /*
      * Pass 2 (per row, float - only ~h iterations): the vertical
