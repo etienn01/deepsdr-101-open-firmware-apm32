@@ -24,10 +24,34 @@ static uint8_t  s_parado;      /* montado, pero desconectado a mano */
 static volatile uint32_t s_isrs;
 static volatile uint32_t s_perdidos;
 
+/*
+ * THE BYTE BUFFERS LIVE IN THE TCM - 14/11/2026.
+ *
+ * The three ring buffers and the three endpoint buffers below (2,884 bytes)
+ * are in the core-coupled RAM at 0x10000000, which no DMA can reach, to keep
+ * main SRAM free. Nothing but the CPU touches them: the rings are filled and
+ * emptied byte by byte by usb_cdc_anillo.c, and the USB core runs the FS
+ * peripheral in FIFO mode (transfer_mode = USB_USE_FIFO; the library only
+ * switches to its internal DMA on the HS core with USB_HS_INTERNAL_DMA_ENABLED,
+ * which this firmware never uses), so the endpoint buffers are copied to and
+ * from the FIFO by usb_txfifo_write()/usb_rxfifo_read() on the CPU. Those copy
+ * whole words: s_rx and s_tx are 64 bytes, a whole number of words, and an OUT
+ * packet is at most 64, so the copy never runs past their end.
+ *
+ * Left in main SRAM on purpose: s_linea and s_aud_hz (they have initial
+ * values, and .tcmram is zero-filled, not loaded), s_aud_tira (3 bytes), the
+ * ring descriptors and g_usb_cdc.
+ */
+#if defined(__arm__)
+#define TCMRAM_BSS __attribute__((section(".tcmram")))
+#else
+#define TCMRAM_BSS
+#endif
+
 static anillo_t s_hacia_pc;    /* lo escribe el bucle, lo vacia la ISR */
 static anillo_t s_desde_pc;    /* lo llena la ISR, lo lee el bucle */
-static uint8_t  s_buf_hacia[256];
-static uint8_t  s_buf_desde[256];
+static uint8_t  s_buf_hacia[256] TCMRAM_BSS;
+static uint8_t  s_buf_desde[256] TCMRAM_BSS;
 
 /*
  * EL ANILLO DEL AUDIO, Y POR QUE MIDE DIEZ VECES MAS.
@@ -44,14 +68,14 @@ static uint8_t  s_buf_desde[256];
  */
 #define AUD_ANILLO_TAM  2048U
 static anillo_t s_audio;
-static uint8_t  s_buf_audio[AUD_ANILLO_TAM];
+static uint8_t  s_buf_audio[AUD_ANILLO_TAM] TCMRAM_BSS;
 static volatile uint8_t  s_audio_on;     /* el PC ha pedido el ajuste 1 */
 static volatile uint32_t s_audio_huecos; /* tramas vacias DESPUES de arrancar */
 static volatile uint8_t  s_audio_vivo;   /* ya ha salido audio de verdad */
-static uint8_t  s_tx_aud[USB_AUD_EP_TAM];
+static uint8_t  s_tx_aud[USB_AUD_EP_TAM] TCMRAM_BSS;
 
-static uint8_t  s_rx[USB_CDC_EP_TAM];
-static uint8_t  s_tx[USB_CDC_EP_TAM];
+static uint8_t  s_rx[USB_CDC_EP_TAM] TCMRAM_BSS;
+static uint8_t  s_tx[USB_CDC_EP_TAM] TCMRAM_BSS;
 static volatile uint8_t s_tx_ocupado;
 
 /*
