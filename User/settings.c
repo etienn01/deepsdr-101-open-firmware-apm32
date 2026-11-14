@@ -117,12 +117,11 @@ void settings_cuentas(uint16_t *ok, uint16_t *mal, uint32_t *ultimo_ms)
 }
 static uint32_t s_dirty_since_ms = 0U;
 
-/* Buffer for the CSV being saved via the async path - must stay
- * valid/unchanged for the WHOLE async operation (many poll() calls
- * across many main loop iterations), since
- * spi_flash_async_save_start() only references it, doesn't copy it -
- * see spi_flash.h's comment. A stack-local buffer would be gone the
- * instant settings_poll() returns, so this has to be static. */
+/* Buffer for the CSV being built for a save. spi_flash_async_save_start()
+ * copies it into the block image the save writes back before it returns
+ * (see spi_flash.h), so nothing reads it while the async save is in
+ * flight. It is static because 2,112 bytes do not belong on the stack:
+ * settings_load() and settings_save_now() use it too, see their comments. */
 /* 23/09/2026: 1024, luego 1600, y hoy 2112 (ver s_async_csv_buf justo debajo; el fichero
  * en si mide CSV_TAMANO = 1536 y el buffer lleva sitio para el cero y para el
  * aviso). El "1024" de esta linea se quedo escrito cuando se subio, y a dos

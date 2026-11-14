@@ -412,6 +412,8 @@ uint8_t spi_flash_unique_id(uint8_t out[8])
 
 static uint8_t spi_read_status1(void);
 static uint8_t s_async_phase_es_reposo(void);
+static void    async_save_finish(void);
+static void    async_save_make_way(uint32_t addr, uint32_t len);
 
 /*
  * ======================================================================
@@ -473,7 +475,10 @@ static void espera_chip_libre(void)
     }
 }
 
-void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
+/* The read itself. The async save's own steps read through here and not
+ * through spi_flash_read(), which may finish that same save first: see
+ * async_save_make_way(). */
+static void lee_chip(uint32_t addr, uint8_t *buf, uint32_t len)
 {
     uint32_t i;
 
@@ -488,6 +493,12 @@ void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
         buf[i] = spi_xfer_byte(0x00U);
     }
     f_cs(1);
+}
+
+void spi_flash_read(uint32_t addr, uint8_t *buf, uint32_t len)
+{
+    async_save_make_way(addr, len);
+    lee_chip(addr, buf, len);
 }
 
 /* --- write support --------------------------------------------------
@@ -534,8 +545,12 @@ static void spi_wait_busy(void)
     }
 }
 
+/* Nothing is erased or programmed while an async save is halfway: it is
+ * finished first, in the three places that send those commands for the
+ * blocking paths (these two and borrado_manda()). See async_save_finish(). */
 void spi_flash_sector_erase_4k(uint32_t addr)
 {
+    async_save_finish();
     spi_write_enable();
     f_cs(0);
     delay_us_approx(1);
@@ -551,6 +566,7 @@ void spi_flash_page_program(uint32_t addr, const uint8_t *data, uint32_t len)
 {
     uint32_t i;
 
+    async_save_finish();
     spi_write_enable();
     f_cs(0);
     delay_us_approx(1);
@@ -657,6 +673,7 @@ static const struct {
 
 static void borrado_manda(uint8_t cmd, uint32_t addr)
 {
+    async_save_finish();
     spi_write_enable();
     f_cs(0);
     delay_us_approx(1);
@@ -2355,15 +2372,14 @@ static void sello_pega(uint8_t *e)
  * tamaño de un fichero que crece a trozos- siguen teniendo que tocar el
  * directorio, y para esos esta el respaldo: ver respaldo_guarda().
  */
-static uint8_t entrada_ya_dice_lo_mismo(uint32_t dir_off,
-                                        const char name8[8], const char ext3[3],
-                                        uint32_t first_cluster, uint32_t len)
+/* The comparison itself, on the 32 bytes of an entry already read: the
+ * blocking path reads them with spi_flash_read() (entrada_ya_dice_lo_mismo()),
+ * the async save's poll with lee_chip(), see async_save_make_way(). */
+static uint8_t entrada_igual(const uint8_t *e,
+                             const char name8[8], const char ext3[3],
+                             uint32_t first_cluster, uint32_t len)
 {
-    uint8_t e[32];
     uint32_t i;
-
-    if ((dir_off + 32U) > ROOT_DIR_BYTES) { return 0U; }
-    spi_flash_read(RAIZ_ABS + dir_off, e, 32U);
 
     for (i = 0U; i < 8U; i++) {
         if (e[i] != (uint8_t)name8[i]) { return 0U; }
@@ -2381,6 +2397,17 @@ static uint8_t entrada_ya_dice_lo_mismo(uint32_t dir_off,
     if (e[30] != (uint8_t)((len >> 16) & 0xFFU))            { return 0U; }
     if (e[31] != (uint8_t)((len >> 24) & 0xFFU))            { return 0U; }
     return 1U;
+}
+
+static uint8_t entrada_ya_dice_lo_mismo(uint32_t dir_off,
+                                        const char name8[8], const char ext3[3],
+                                        uint32_t first_cluster, uint32_t len)
+{
+    uint8_t e[32];
+
+    if ((dir_off + 32U) > ROOT_DIR_BYTES) { return 0U; }
+    spi_flash_read(RAIZ_ABS + dir_off, e, 32U);
+    return entrada_igual(e, name8, ext3, first_cluster, len);
 }
 
 static int write_file_data_and_entry(uint32_t dir_off, uint8_t write_terminator, uint8_t write_fat_chain,
@@ -2937,7 +2964,7 @@ static uint8_t s_async_phase_es_reposo(void)
 {
     return (uint8_t)(s_async_phase == (uint8_t)ASAVE_IDLE);
 }
-static uint32_t s_async_dir_off;
+static uint32_t s_async_entrada_abs;   /* chip address of the file's directory entry */
 static uint16_t s_async_cluster;
 static char s_async_name8[8];
 static char s_async_ext3[3];
@@ -3137,7 +3164,7 @@ uint8_t spi_flash_async_save_start(const char name8[8], const char ext3[3],
         (void)first_data_sector;
     }
 
-    s_async_dir_off = dir_off;
+    s_async_entrada_abs = RAIZ_ABS + dir_off;
     s_async_cluster = old_cluster;
     for (i = 0U; i < 8U; i++) { s_async_name8[i] = name8[i]; }
     for (i = 0U; i < 3U; i++) { s_async_ext3[i] = ext3[i]; }
@@ -3189,7 +3216,52 @@ uint8_t spi_flash_async_save_en_vuelo(void)
     return (uint8_t)(s_async_phase != (uint8_t)ASAVE_IDLE);
 }
 
-spi_flash_async_status_t spi_flash_async_save_poll(void)
+/*
+ * ======================================================================
+ * NOTHING TOUCHES WHAT A HALFWAY SAVE IS REWRITING - 14/11/2026.
+ * ======================================================================
+ *
+ * An async save keeps, from one poll to the next, two 4 kB images: the
+ * block that holds the file's data, read at start with the new bytes
+ * spliced in, and later the root-directory block that holds its entry,
+ * read when the data block is done. Each is erased and then programmed one
+ * page per poll, so for a while the chip holds an erased or half-written
+ * block, and the image in RAM is the only good copy. Every blocking path of
+ * this file (screenshots, the memory bank, WEFAX rotation, files deleted,
+ * created or reserved, the formatter, the high-zone tools...) runs between
+ * two of those polls. Before this, any of them could:
+ *   - read that block half-written - a directory with entries of 0xFF, a
+ *     FAT or a boot sector read as erased - and write back what it made of
+ *     it, or decide from it (a screenshot's next file number);
+ *   - change that block - another file's entry in the same directory
+ *     block, another file's cluster in the same data block, which happens
+ *     with 512-byte clusters - and have the save program its stale image
+ *     over it, or have its own write programmed over the save's;
+ *   - send its own erase or program while the chip was still busy with the
+ *     save's: the chip ignores every command but the status read while it
+ *     is busy, so that write was silently lost.
+ *
+ * So, while a save is halfway:
+ *   - anything that erases or programs finishes it first (sector and page
+ *     writes, borrado_manda());
+ *   - a read of either block the save is rewriting finishes it first
+ *     (spi_flash_read(), via async_save_make_way()); every other read only
+ *     waits for the chip as before, so the map, the station names and the
+ *     rest of what is read every frame keep the save smooth;
+ *   - the save's own steps read with lee_chip(), never with
+ *     spi_flash_read(), and do not reach geo(): no step can re-enter this.
+ * With no save in flight every one of those checks is a comparison and
+ * nothing else changes.
+ *
+ * Finishing it here does not take the result away from its owner: a save
+ * finished outside spi_flash_async_save_poll() keeps its DONE or ERROR in
+ * s_async_acabado, and the next poll -settings_poll()'s- returns it, once,
+ * as if it had finished there. Losing that result is what kept CONFIG.CSV
+ * from ever being saved again on 24/10/2026: see the comment above.
+ */
+static uint8_t s_async_acabado = (uint8_t)SPI_FLASH_ASYNC_IDLE;
+
+static spi_flash_async_status_t async_paso(void)
 {
     if (s_async_phase == (uint8_t)ASAVE_IDLE) {
         return SPI_FLASH_ASYNC_IDLE;
@@ -3250,11 +3322,20 @@ spi_flash_async_status_t spi_flash_async_save_poll(void)
              * abandona el camino asincrono y se devuelve ERROR, que es
              * como se le dice a quien llama que este guardado hay que
              * hacerlo por el camino bloqueante.
+             *
+             * Since 14/11/2026 that sum, RAIZ_ABS plus the entry's offset,
+             * is taken once in spi_flash_async_save_start() and kept in
+             * s_async_entrada_abs: this step may now run from inside
+             * spi_flash_read() (see async_save_make_way()), so it must not
+             * reach geo() nor spi_flash_read() itself, and it reads with
+             * lee_chip(). The offset comes from dir_find_entry(), so the
+             * 32 bytes always fit in the root directory.
              */
-            uint32_t entrada_abs = RAIZ_ABS + s_async_dir_off;
+            uint32_t entrada_abs = s_async_entrada_abs;
             uint32_t dir_block_addr = entrada_abs & ~(uint32_t)(FLASH_SECTOR_SIZE - 1U);
             uint32_t off_in_block = entrada_abs - dir_block_addr;
             uint8_t *e;
+            uint8_t ya[32];
             uint32_t i;
 
             /*
@@ -3270,9 +3351,9 @@ spi_flash_async_status_t spi_flash_async_save_poll(void)
              * congelar el bucle principal, y lo que se quita es un
              * borrado entero de los dos que hacia.
              */
-            if (entrada_ya_dice_lo_mismo(s_async_dir_off, s_async_name8,
-                                         s_async_ext3, s_async_cluster,
-                                         s_async_data_len)) {
+            lee_chip(entrada_abs, ya, 32U);
+            if (entrada_igual(ya, s_async_name8, s_async_ext3, s_async_cluster,
+                              s_async_data_len)) {
                 debug_print("spi_flash_async_save: la entrada ya dice lo mismo - done sin tocar el directorio\n");
                 s_async_phase = (uint8_t)ASAVE_IDLE;
                 return SPI_FLASH_ASYNC_DONE;
@@ -3285,7 +3366,7 @@ spi_flash_async_status_t spi_flash_async_save_poll(void)
             }
             e = &s_async_scratch[off_in_block];
 
-            spi_flash_read(dir_block_addr, s_async_scratch, FLASH_SECTOR_SIZE);
+            lee_chip(dir_block_addr, s_async_scratch, FLASH_SECTOR_SIZE);
             for (i = 0U; i < 8U; i++) { e[i] = (uint8_t)s_async_name8[i]; }
             for (i = 0U; i < 3U; i++) { e[8U + i] = (uint8_t)s_async_ext3[i]; }
             e[11] = 0x20U;
@@ -3314,6 +3395,58 @@ spi_flash_async_status_t spi_flash_async_save_poll(void)
 
     s_async_phase = (uint8_t)ASAVE_IDLE;
     return SPI_FLASH_ASYNC_ERROR;
+}
+
+spi_flash_async_status_t spi_flash_async_save_poll(void)
+{
+    spi_flash_async_status_t st = (spi_flash_async_status_t)s_async_acabado;
+
+    if (st != SPI_FLASH_ASYNC_IDLE) {
+        s_async_acabado = (uint8_t)SPI_FLASH_ASYNC_IDLE;
+        return st;
+    }
+    return async_paso();
+}
+
+/* Runs a halfway save to its end now. 100 us between steps and the same
+ * 10-second give-up as spi_wait_busy(): the worst case of the datasheet is
+ * two 400 ms erases and 32 page programs, far from it, and a chip that never
+ * frees up must not hang the radio for good. */
+static void async_save_finish(void)
+{
+    uint32_t vueltas = 0UL;
+    spi_flash_async_status_t st;
+
+    if (s_async_phase == (uint8_t)ASAVE_IDLE) { return; }
+    while ((st = async_paso()) == SPI_FLASH_ASYNC_BUSY) {
+        delay_us_approx(100);
+        if (++vueltas > 100000UL) { return; }
+    }
+    s_async_acabado = (uint8_t)st;
+}
+
+/* 1 if [addr, addr + len) touches the 4 kB block that starts at `bloque`. */
+static uint8_t toca_bloque(uint32_t addr, uint32_t len, uint32_t bloque)
+{
+    return (uint8_t)((len != 0UL) && (addr < (bloque + FLASH_SECTOR_SIZE))
+                     && (bloque < (addr + len)));
+}
+
+/* Before a read: finish the save if the read touches a block it is
+ * rewriting or is going to - its data block while that is being written
+ * (s_async_block_op, during ASAVE_DATA_BLOCK) and its entry's directory
+ * block for the whole save (during ASAVE_ENTRY_BLOCK s_async_block_op is
+ * that same block). A read of the directory block before the save gets to
+ * it counts too: whoever reads it may write it back later in the same
+ * operation, and the save would then rewrite it from its own older copy. */
+static void async_save_make_way(uint32_t addr, uint32_t len)
+{
+    uint32_t dir = s_async_entrada_abs & ~(uint32_t)(FLASH_SECTOR_SIZE - 1U);
+
+    if (s_async_phase == (uint8_t)ASAVE_IDLE) { return; }
+    if (toca_bloque(addr, len, s_async_block_op.block_addr) || toca_bloque(addr, len, dir)) {
+        async_save_finish();
+    }
 }
 
 /* ======================================================================

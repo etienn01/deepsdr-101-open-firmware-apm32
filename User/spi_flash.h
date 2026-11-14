@@ -507,11 +507,6 @@ typedef struct {
  * el resultado, no por fotograma. Completamente de solo lectura. */
 void spi_flash_mira_alta(spi_flash_alta_t *out);
 
-/* `data` must stay valid and UNCHANGED until spi_flash_async_save_poll()
- * reports DONE or ERROR - it is not copied at start time, only
- * referenced. Returns 1 if the async save actually started (poll from
- * here on), 0 if the fast-path preconditions weren't met (nothing
- * started - fall back to spi_flash_write_or_update_file()). */
 /*
  * 1 si la cadena de clusters de ese fichero es SEGUIDA, que es lo que el
  * camino rapido de guardado exige. Con 0, cada guardado se hace por el
@@ -520,10 +515,19 @@ void spi_flash_mira_alta(spi_flash_alta_t *out);
  */
 uint8_t spi_flash_cadena_seguida(const char name8[8], const char ext3[3]);
 
+/* Returns 1 if the async save actually started (poll from here on), 0 if
+ * the fast-path preconditions weren't met (nothing started - fall back to
+ * spi_flash_write_or_update_file()). `data` is copied before this returns,
+ * into the 4 kB image of its block that the save writes back, so the
+ * caller's buffer is free again as soon as it does. */
 uint8_t spi_flash_async_save_start(const char name8[8], const char ext3[3],
                                     const uint8_t *data, uint32_t len);
 
-/* Call once per main loop iteration while a save is in progress. */
+/* Call once per main loop iteration while a save is in progress. Anything
+ * in this file that would erase, program or read what the save is halfway
+ * through rewriting finishes it first (see "NOTHING TOUCHES WHAT A HALFWAY
+ * SAVE IS REWRITING" in spi_flash.c); its DONE or ERROR is then returned by
+ * the next call here, exactly once, as if it had ended in it. */
 spi_flash_async_status_t spi_flash_async_save_poll(void);
 
 /*
