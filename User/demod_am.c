@@ -2206,28 +2206,30 @@ static void debug_print_dec_signed_local(const char *label, int32_t val)
 
 /* SSB decimated-chain instances + state (see the PIPELINE comment
  * above DECIM_COEFFS_96K). CMSIS state sizes:
- *   decimate:    numTaps + blockSize(INPUT, 256) - 1
- *   plain FIR:   numTaps + blockSize(decimated) - 1
- *   interpolate: (numTaps/L) + blockSize(decimated) - 1
+ *   decimate:    numTaps + blockSize(INPUT) - 1
+ *   plain FIR:   numTaps + blockSize - 1
+ *   interpolate: (numTaps/L) + blockSize(INPUT, decimated) - 1
  * I and Q each need their own decimator state (same coefficients,
  * independent signals - same pattern as the channel filter pair).
  *
- * *** 01/09/2026: sized to the LARGER of the 96K/48K requirements,
- * not just the 96K one *** - see DEC_BLOCK_SAMPLES_MAX's own comment
- * for why the two rates need genuinely different amounts here this
- * time (unlike every previous Fs move). DECIM_STATE_SIZE_MAX happens
- * to land on the 96K case (more taps there, 96 vs 41, outweighs its
- * smaller decimated block size) - HILBERT_STATE_SIZE_MAX and
- * INTERP_STATE_SIZE_MAX both land on the 48K case instead (same or
- * fewer taps, but a decimated block that's TWICE as big at 48K -
- * DEC_BLOCK_SAMPLES_48K=64 vs DEC_BLOCK_SAMPLES_96K=32 - dominates).
- * Verified by direct computation, not assumed: 96K decim-state=351 vs
- * 48K's 296 (96K wins); 96K hilbert-state=94 vs 48K's 126 (48K wins);
- * 96K interp-state=43 vs 48K's 73 (48K wins).
+ * *** 14/11/2026: blockSize is FIR_CHUNK_SAMPLES (32), not the whole
+ * block *** - every call goes through the fir_*_chunks() helpers below,
+ * which feed CMSIS 32 samples at a time. Only numTaps-1 (phaseLength-1
+ * for the interpolator) samples of these buffers survive from one call
+ * to the next; the rest is scratch for the call in progress, so a chunk
+ * needs no more room than that. Before, the decimator states held a whole
+ * 256-sample input block (351 floats) and the Hilbert/interpolator states
+ * a whole 64-sample 48K decimated block (126 and 73 floats).
+ *
+ * With the chunk size fixed, the larger requirement is the one with more
+ * taps, which is the 96K case for all three (96 vs 41 decimator taps, 12
+ * vs 10 interpolator taps per phase, the same Hilbert at both rates) -
+ * the asserts below the helpers check that the 48K case fits too.
  */
-#define DECIM_STATE_SIZE_MAX (DECIM_COEFFS_96K_TAPS + SDR_RX_BLOCK_SAMPLES - 1U) /* 351 */
-#define HILBERT_STATE_SIZE_MAX (HILBERT_COEFFS_TAPS + DEC_BLOCK_SAMPLES_MAX - 1U) /* 126 */
-#define INTERP_STATE_SIZE_MAX ((INTERP_COEFFS_48K_TAPS / DECIM_FACTOR_48K) + DEC_BLOCK_SAMPLES_MAX - 1U) /* 73 */
+#define FIR_CHUNK_SAMPLES 32U
+#define DECIM_STATE_SIZE_MAX (DECIM_COEFFS_96K_TAPS + FIR_CHUNK_SAMPLES - 1U) /* 127 */
+#define HILBERT_STATE_SIZE_MAX (HILBERT_COEFFS_TAPS + FIR_CHUNK_SAMPLES - 1U) /* 94 */
+#define INTERP_STATE_SIZE_MAX ((INTERP_COEFFS_96K_TAPS / DECIM_FACTOR_96K) + FIR_CHUNK_SAMPLES - 1U) /* 43 */
 static arm_fir_decimate_instance_f32 s_decim_i_inst;
 static arm_fir_decimate_instance_f32 s_decim_q_inst;
 static arm_fir_instance_f32          s_hilbert_inst;
@@ -2245,6 +2247,81 @@ static float32_t s_decim_i_state[DECIM_STATE_SIZE_MAX] TCMRAM_BSS;
 static float32_t s_decim_q_state[DECIM_STATE_SIZE_MAX] TCMRAM_BSS;
 static float32_t s_hilbert_state[HILBERT_STATE_SIZE_MAX] TCMRAM_BSS;
 static float32_t s_interp_state[INTERP_STATE_SIZE_MAX] TCMRAM_BSS;
+
+/*
+ * THE CMSIS FIRs, FED IN CHUNKS - 14/11/2026.
+ *
+ * arm_fir_decimate_f32(), arm_fir_f32() and arm_fir_interpolate_f32()
+ * do not keep blockSize from their init call: they copy the new input
+ * behind the numTaps-1 (phaseLength-1) samples of history at the start of
+ * the state buffer, compute every output from there, and move the last
+ * numTaps-1 (phaseLength-1) samples back to the start. So running a block
+ * as several consecutive calls gives the same outputs, bit for bit, as one
+ * call: each output is the same dot product over the same samples, with
+ * the coefficients taken in the same order. The only thing that grows with
+ * blockSize is the scratch part of the state buffer - hence the chunks,
+ * which let the six state buffers shrink by 3,056 bytes of TCM.
+ *
+ * Every call to those three functions in this file goes through these
+ * helpers, and every init passes FIR_CHUNK_SAMPLES as blockSize: a direct
+ * call with a larger block would run past the end of the smaller buffers.
+ *
+ * Each call costs one extra copy of the history (95 floats for the 96K
+ * decimator) per chunk: eight chunks per 256-sample decimator input, one
+ * or two for the 32/64-sample decimated blocks. A few thousand cycles per
+ * block in the worst case, against the 2.67 ms the block lasts.
+ *
+ * n need not be a multiple of the chunk: the last chunk is shorter. For
+ * the decimator every chunk must still be a multiple of M, which holds
+ * for the only n it gets (SDR_RX_BLOCK_SAMPLES, asserted below).
+ */
+static void fir_decimate_chunks(const arm_fir_decimate_instance_f32 *S,
+                                const float32_t *src, float32_t *dst, uint32_t n)
+{
+    while (n > 0U) {
+        uint32_t c = (n < FIR_CHUNK_SAMPLES) ? n : FIR_CHUNK_SAMPLES;
+
+        arm_fir_decimate_f32(S, src, dst, c);
+        src += c;
+        dst += c / (uint32_t)S->M;
+        n -= c;
+    }
+}
+
+static void fir_chunks(const arm_fir_instance_f32 *S,
+                       const float32_t *src, float32_t *dst, uint32_t n)
+{
+    while (n > 0U) {
+        uint32_t c = (n < FIR_CHUNK_SAMPLES) ? n : FIR_CHUNK_SAMPLES;
+
+        arm_fir_f32(S, src, dst, c);
+        src += c;
+        dst += c;
+        n -= c;
+    }
+}
+
+static void fir_interpolate_chunks(const arm_fir_interpolate_instance_f32 *S,
+                                   const float32_t *src, float32_t *dst, uint32_t n)
+{
+    while (n > 0U) {
+        uint32_t c = (n < FIR_CHUNK_SAMPLES) ? n : FIR_CHUNK_SAMPLES;
+
+        arm_fir_interpolate_f32(S, src, dst, c);
+        src += c;
+        dst += c * (uint32_t)S->L;
+        n -= c;
+    }
+}
+
+_Static_assert((FIR_CHUNK_SAMPLES % DECIM_FACTOR_96K) == 0U
+               && (FIR_CHUNK_SAMPLES % DECIM_FACTOR_48K) == 0U
+               && (SDR_RX_BLOCK_SAMPLES % FIR_CHUNK_SAMPLES) == 0U,
+               "every decimator chunk must hold a whole number of outputs");
+_Static_assert(DECIM_COEFFS_48K_TAPS <= DECIM_COEFFS_96K_TAPS
+               && (INTERP_COEFFS_48K_TAPS / DECIM_FACTOR_48K)
+                  <= (INTERP_COEFFS_96K_TAPS / DECIM_FACTOR_96K),
+               "the 48K filters must fit the state buffers sized for 96K");
 
 /* Decimated-rate (12kHz) working buffers - sized to
  * DEC_BLOCK_SAMPLES_MAX(64, the 48K case) now, not a single fixed
@@ -3706,10 +3783,11 @@ float demod_am_get_active_fs_hz(void)
  * HILBERT_STATE_SIZE_MAX e INTERP_STATE_SIZE_MAX -ver sus propios
  * comentarios-, o sea lo bastante grandes para lo que de verdad pide
  * CUALQUIERA de las dos velocidades. Asi que reinicializar aqui no puede
- * desbordarlos nunca: simplemente usa menos de un buffer que ya era
- * bastante grande cuando se elige el caso de 96 kHz, que necesita menos
- * estado que el de 48 para los buffers del dominio diezmado -ver el
- * comentario de DEC_BLOCK_SAMPLES_MAX-.
+ * desbordarlos nunca.
+ * (14/11/2026: since the CMSIS FIRs run in FIR_CHUNK_SAMPLES chunks, the
+ * state sizes no longer depend on the block size; the 96K case, with more
+ * taps, is the larger one for all of them and the 48K case uses less of
+ * each buffer - see the comment above DECIM_STATE_SIZE_MAX.)
  *
  * Tambien vuelve a deducir s_agc_release para el perfil de automatico de
  * ganancia que haya puesto -los coeficientes de soltada tambien dependen
@@ -3846,57 +3924,57 @@ void demod_am_set_active_rate(uint8_t is_48k)
     if (s_active_rate_is_48k) {
         if (arm_fir_decimate_init_f32(&s_decim_i_inst, DECIM_COEFFS_48K_TAPS, s_decim_factor,
                                         DECIM_COEFFS_48K, s_decim_i_state,
-                                        SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                        FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** decimator I init FAILED (48K, blockSize %% M != 0?) ***\n");
         }
         if (arm_fir_decimate_init_f32(&s_decim_q_inst, DECIM_COEFFS_48K_TAPS, s_decim_factor,
                                         DECIM_COEFFS_48K, s_decim_q_state,
-                                        SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                        FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** decimator Q init FAILED (48K) ***\n");
         }
         arm_fir_init_f32(&s_hilbert_inst, HILBERT_COEFFS_TAPS, HILBERT_COEFFS,
-                          s_hilbert_state, s_dec_block_samples);
+                          s_hilbert_state, FIR_CHUNK_SAMPLES);
         if (arm_fir_interpolate_init_f32(&s_interp_inst, s_decim_factor, INTERP_COEFFS_48K_TAPS,
                                            INTERP_COEFFS_48K, s_interp_state,
-                                           s_dec_block_samples) != ARM_MATH_SUCCESS) {
+                                           FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** interpolator init FAILED (48K, numTaps %% L != 0?) ***\n");
         }
         if (arm_fir_decimate_init_f32(&s_nr_decim_inst, DECIM_COEFFS_48K_TAPS, s_decim_factor,
                                         DECIM_COEFFS_48K, s_nr_decim_state,
-                                        SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                        FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** NR decimator init FAILED (48K, blockSize %% M != 0?) ***\n");
         }
         if (arm_fir_interpolate_init_f32(&s_nr_interp_inst, s_decim_factor, INTERP_COEFFS_48K_TAPS,
                                            INTERP_COEFFS_48K, s_nr_interp_state,
-                                           s_dec_block_samples) != ARM_MATH_SUCCESS) {
+                                           FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** NR interpolator init FAILED (48K, numTaps %% L != 0?) ***\n");
         }
     } else {
         if (arm_fir_decimate_init_f32(&s_decim_i_inst, DECIM_COEFFS_96K_TAPS, s_decim_factor,
                                         DECIM_COEFFS_96K, s_decim_i_state,
-                                        SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                        FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** decimator I init FAILED (96K, blockSize %% M != 0?) ***\n");
         }
         if (arm_fir_decimate_init_f32(&s_decim_q_inst, DECIM_COEFFS_96K_TAPS, s_decim_factor,
                                         DECIM_COEFFS_96K, s_decim_q_state,
-                                        SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                        FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** decimator Q init FAILED (96K) ***\n");
         }
         arm_fir_init_f32(&s_hilbert_inst, HILBERT_COEFFS_TAPS, HILBERT_COEFFS,
-                          s_hilbert_state, s_dec_block_samples);
+                          s_hilbert_state, FIR_CHUNK_SAMPLES);
         if (arm_fir_interpolate_init_f32(&s_interp_inst, s_decim_factor, INTERP_COEFFS_96K_TAPS,
                                            INTERP_COEFFS_96K, s_interp_state,
-                                           s_dec_block_samples) != ARM_MATH_SUCCESS) {
+                                           FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** interpolator init FAILED (96K, numTaps %% L != 0?) ***\n");
         }
         if (arm_fir_decimate_init_f32(&s_nr_decim_inst, DECIM_COEFFS_96K_TAPS, s_decim_factor,
                                         DECIM_COEFFS_96K, s_nr_decim_state,
-                                        SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                        FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** NR decimator init FAILED (96K, blockSize %% M != 0?) ***\n");
         }
         if (arm_fir_interpolate_init_f32(&s_nr_interp_inst, s_decim_factor, INTERP_COEFFS_96K_TAPS,
                                            INTERP_COEFFS_96K, s_nr_interp_state,
-                                           s_dec_block_samples) != ARM_MATH_SUCCESS) {
+                                           FIR_CHUNK_SAMPLES) != ARM_MATH_SUCCESS) {
             debug_print("demod_am: *** NR interpolator init FAILED (96K, numTaps %% L != 0?) ***\n");
         }
     }
@@ -5228,7 +5306,7 @@ static void fases_combina(const float32_t *i_dec, const float32_t *q_dec,
     /* 2a. Hilbert-shift the decimated Q (90 degrees across the
      * audio band, now with proper coverage down to ~300Hz - see
      * the design numbers above HILBERT_COEFFS). */
-    arm_fir_f32(&s_hilbert_inst, q_dec, s_q_hilbert_out, s_dec_block_samples);
+    fir_chunks(&s_hilbert_inst, q_dec, s_q_hilbert_out, s_dec_block_samples);
 
     /* 2b. Delay-match the decimated I by the Hilbert's group
      * delay: history (previous block's tail) followed by the
@@ -5333,11 +5411,11 @@ static void sam_banda_lateral(float32_t *ib, float32_t *qb, float32_t *salida,
     sam_bloque_cuad_mez(&s_sam, ib, qb, ib, qb,
                         (uint32_t)SDR_RX_BLOCK_SAMPLES,
                         demod_am_active_fs_hz(), mez);
-    arm_fir_decimate_f32(&s_decim_i_inst, ib, s_i_dec, SDR_RX_BLOCK_SAMPLES);
-    arm_fir_decimate_f32(&s_decim_q_inst, qb, s_q_dec, SDR_RX_BLOCK_SAMPLES);
+    fir_decimate_chunks(&s_decim_i_inst, ib, s_i_dec, SDR_RX_BLOCK_SAMPLES);
+    fir_decimate_chunks(&s_decim_q_inst, qb, s_q_dec, SDR_RX_BLOCK_SAMPLES);
     fases_combina(s_i_dec, s_q_dec, sign, s_ssb_dec);
-    arm_fir_interpolate_f32(&s_interp_inst, s_ssb_dec, salida,
-                            s_dec_block_samples);
+    fir_interpolate_chunks(&s_interp_inst, s_ssb_dec, salida,
+                           s_dec_block_samples);
 }
 
 /*
@@ -6253,8 +6331,8 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
          * que es con lo que el decodificador sabe que modo es.
          */
         if (sstv_activo()) {
-            arm_fir_decimate_f32(&s_nr_decim_inst, s_env, s_nr_buf,
-                                 SDR_RX_BLOCK_SAMPLES);
+            fir_decimate_chunks(&s_nr_decim_inst, s_env, s_nr_buf,
+                                SDR_RX_BLOCK_SAMPLES);
             sstv_process(s_nr_buf, s_dec_block_samples);
         }
     } else {
@@ -6268,8 +6346,8 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
          * 192kHz -> 32 @ 12kHz before 04/08/2026 - see sdr_rx.h's
          * SDR_RX_BLOCK_SAMPLES comment), anti-aliased by DECIM_COEFFS
          * inside the same call. */
-        arm_fir_decimate_f32(&s_decim_i_inst, s_i_buf, s_i_dec, SDR_RX_BLOCK_SAMPLES);
-        arm_fir_decimate_f32(&s_decim_q_inst, s_q_buf, s_q_dec, SDR_RX_BLOCK_SAMPLES);
+        fir_decimate_chunks(&s_decim_i_inst, s_i_buf, s_i_dec, SDR_RX_BLOCK_SAMPLES);
+        fir_decimate_chunks(&s_decim_q_inst, s_q_buf, s_q_dec, SDR_RX_BLOCK_SAMPLES);
 
         /*
          * HFDL SE ENGANCHA AQUI. 25/09/2026.
@@ -6637,7 +6715,7 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
          * compensa lo que se pierde al meter ceros; ver el comentario de
          * LA CADENA: sin ella, esto sale a la decimosexta parte del
          * volumen. */
-        arm_fir_interpolate_f32(&s_interp_inst, s_ssb_dec, s_env, s_dec_block_samples);
+        fir_interpolate_chunks(&s_interp_inst, s_ssb_dec, s_env, s_dec_block_samples);
     }
 
     /*
@@ -6915,14 +6993,14 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
     const uint8_t am_o_sam = (uint8_t)((s_mode == (uint8_t)DEMOD_MODE_AM)
                                     || (s_mode == (uint8_t)DEMOD_MODE_SAM));
     if (am_o_sam && (nr_ss_get_enabled() || anotch_activo())) {
-        arm_fir_decimate_f32(&s_nr_decim_inst, s_env, s_nr_buf, SDR_RX_BLOCK_SAMPLES);
+        fir_decimate_chunks(&s_nr_decim_inst, s_env, s_nr_buf, SDR_RX_BLOCK_SAMPLES);
         if (nr_ss_get_enabled()) {
             nr_ss_process_chunks(s_nr_buf, s_dec_block_samples);
         }
         if (notch_permitido()) {
             anotch_process(s_nr_buf, s_dec_block_samples);
         }
-        arm_fir_interpolate_f32(&s_nr_interp_inst, s_nr_buf, s_env, s_dec_block_samples);
+        fir_interpolate_chunks(&s_nr_interp_inst, s_nr_buf, s_env, s_dec_block_samples);
 
         {
             uint32_t cyc_now = DWT->CYCCNT;

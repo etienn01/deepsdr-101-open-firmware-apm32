@@ -11461,8 +11461,10 @@ static void apply_demod_mode(demod_mode_t mode)
          * (48 kHz) pero todavia no ha reinicializado s_interp_inst, que
          * sigue con L = 8 (96 kHz): arm_fir_interpolate_f32() escribia
          * 64 x 8 = 512 floats en s_env[256], 1 KB pasado el final, encima de
-         * s_audio_out. Y s_interp_state[73] se queda corto (12 + 64 - 1 =
-         * 75). Se engancha despues, al final del bloque. */
+         * s_audio_out. (The interpolator state itself can no longer overrun:
+         * since 14/11/2026 the CMSIS FIRs run in 32-sample chunks, see
+         * FIR_CHUNK_SAMPLES in demod_am.c.) Se engancha despues, al final del
+         * bloque. */
 
         switch (rate) {
         case AIC3204_RATE_192K:
