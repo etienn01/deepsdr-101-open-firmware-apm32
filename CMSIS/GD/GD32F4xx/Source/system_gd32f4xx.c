@@ -106,7 +106,7 @@ static void system_clock_200m_8m_hxtal(void);
  *   192: 12.288 / 8 x 250 = 384 MHz VCO, /2 = 192 MHz (overclocked, rated 168), USB /8 = 48.000 MHz, MCLK = /125
  */
 #ifndef APM32_SYSCLK_MHZ
-#define APM32_SYSCLK_MHZ 144
+#define APM32_SYSCLK_MHZ 192   /* default, as in reglas.mk */
 #endif
 #if APM32_SYSCLK_MHZ == 192
 #define APM32_PLL_N 250U

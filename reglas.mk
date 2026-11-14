@@ -542,6 +542,18 @@ update4: update
 # opciones no obliga a renombrar nada a mano cada vez.
 -include avisos.mk
 
+# REBUILD WHEN THE COMPILE FLAGS CHANGE - 14/11/2026.
+# make only compares file dates, so an option given on the command line (APM32_SYSCLK_MHZ=..., DMA=0,
+# DEBUG_UART_ENABLED=1...) left the objects built with the old one in place. That is how
+# build_apm32/system_gd32f4xx.o stayed at 192 MHz for days while every other object was built with the 144
+# default, and a clean build would have given a different clock. The full global compile and assemble flags are
+# kept in $(BUILD_DIR)/flags.txt; when they differ from the last build's, the objects are deleted so that all of
+# them are rebuilt. Deleting, not a dependency on flags.txt: macOS's make 3.81 compares whole seconds, so an
+# object written in the same second as the new flags.txt would count as up to date (seen in testing).
+FLAGS_STAMP := $(BUILD_DIR)/flags.txt
+FLAGS_NOW    = $(subst ','"'"',$(CC) $(CFLAGS) | $(AS) $(ASFLAGS))
+$(shell mkdir -p $(BUILD_DIR) && { printf '%s\n' '$(FLAGS_NOW)' | cmp -s - $(FLAGS_STAMP) || { rm -f $(BUILD_DIR)/*.o; printf '%s\n' '$(FLAGS_NOW)' > $(FLAGS_STAMP); }; })
+
 # APM32F407VGT6 build (HamGeek DSP-01 and other clones using that chip): linked at 0x08020000 behind the
 # stock DeepSDR bootloader, see APM32F407VG_FLASH.ld. Builds the .elf/.bin only (no update packaging);
 # flash with: dfu-util -d 314b:0106 -a 0 -s 0x08020000:leave -D build_apm32/firmware_apm32.bin
@@ -551,8 +563,9 @@ APM32_EXCLUDE = $(wildcard User/ft8_*.c) $(filter-out User/hfdl_viterbi.c User/h
                 $(wildcard User/stanag_*.c) User/s4415.c
 # Waterfall rows stored one byte per FFT bin (512) instead of per pixel (756), and a smaller compositor band.
 APM32_RAM_DEFS = -DWATERFALL_STORE_WIDTH=512 -DGFX2_BAND_H=4
-# System clock: 144 (in spec, default) or 192 (overclocked), see system_gd32f4xx.c
-APM32_SYSCLK_MHZ ?= 144
+# System clock: 192 (default, overclocked: the chip is rated 168; what the tested unit has run since 11/11/2026)
+# or 144 (in spec), see system_gd32f4xx.c
+APM32_SYSCLK_MHZ ?= 192
 .PHONY: apm32
 apm32:
 	@$(MAKE) BUILD_DIR=build_apm32 TARGET=firmware_apm32 \

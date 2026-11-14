@@ -53,12 +53,12 @@ Keep it: it holds the stock bootloader and firmware, and it is the only way back
 Requirements: the Arm GNU Toolchain (`arm-none-eabi-gcc`, tested with 15.3.rel2), `make` and `python3`.
 
 ```
-make apm32                         # 144.384 MHz, within the chip's 168 MHz rating
-make apm32 APM32_SYSCLK_MHZ=192    # 192 MHz, overclocked
+make apm32                         # 192 MHz (default), overclocked: the chip is rated 168 MHz
+make apm32 APM32_SYSCLK_MHZ=144    # 144.384 MHz, within the rating
 ```
 
-Both worked on the tested unit; start with 144 on a new one. Run `rm -rf build_apm32` before switching between
-them: `make` does not notice the change.
+Both worked on the tested unit, which has run at 192 MHz since 11/11/2026; use 144 if another unit is unstable.
+Switching needs nothing else: when the flags differ from the last build's (`build_apm32/flags.txt`), everything is rebuilt.
 
 ## Flash
 
