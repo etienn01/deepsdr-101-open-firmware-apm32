@@ -13345,7 +13345,8 @@ static const texto_t k_tactil_nombres[3] = {
 /* Buffer compartido por las celdas: se rellena una por una al construir la
  * pagina, y ui_grid solo guarda el puntero, asi que cada celda necesita el
  * suyo. Doce celdas por 16 caracteres son 192 bytes. */
-static char s_aj_val[UIG_CELLS][16];
+/* It lives in s_ui_txt.aj.val, shared with the other screens: see s_ui_txt,
+ * above cfg_fill(). */
 
 static void aj_u2s(char *b, uint32_t v) { top_u2s(b, v); }
 
@@ -13445,7 +13446,7 @@ static const char *ajuste_valor(uint8_t id, char *buf)
          * informacion util y no un valor distinto del tuyo. */
         if (s_rf_agc_rin_level > s_att_suelo) {
             /* El buffer mas pequeno de los dos que llaman aqui es
-             * s_aj_val[][16], asi que el limite es 15 caracteres. El peor
+             * s_ui_txt.aj.val[][16], asi que el limite es 15 caracteres. El peor
              * caso, "-12 dB (-12 dB)", son exactamente 15 - pero el limite
              * se comprueba en cada paso en vez de fiarse de esa cuenta, que
              * es justo lo que deja de ser cierto el dia que un rotulo
@@ -13981,13 +13982,11 @@ static void hora_sintoniza(void)
  * EL ORDEN SALE DEL LOCALIZADOR. Se calcula UNA VEZ al abrir -husos_ordena()
  * son cincuenta cosenos- y se guarda aqui. Si no se guardase, grid_fill() lo
  * recalcularia en cada pintada de celda.
+ *
+ * The order, the title and the cells' text are kept in s_ui_txt.huso,
+ * shared with the other screens: see s_ui_txt, above cfg_fill().
  */
-static uint8_t     s_huso_orden[64];
-static char        s_huso_titulo[40];
-static char        s_huso_cel[UIG_CELLS][3][18];
 static char        s_huso_btn[24];
-_Static_assert(sizeof s_huso_orden / sizeof s_huso_orden[0] >= 50U,
-               "s_huso_orden[] tiene que caber husos_n(): si crece la tabla de ciudades, crece esto");
 
 /*
  * "+5:30", "-3:00", "UTC". El formato es parte de la respuesta: con el huso
@@ -16089,13 +16088,76 @@ static int8_t         s_cfg_press = -1;
  * banco de memorias; ver cfg_mem_poll(). */
 static uint32_t       s_cfg_press_ms;
 static uint8_t        s_cfg_largo;
-static char           s_cfg_val[UIC_CELLS][20];
+
+/*
+ * THE TEXT BEHIND THE CELLS OF THE MENU SCREENS, ONE COPY FOR ALL - 14/11/2026.
+ *
+ * ui_grid.c and ui_cfg.c only keep POINTERS to each cell's text, so every
+ * screen that builds that text on the fly needs somewhere to keep it while it
+ * is shown. Each screen had its own static buffers, 2,728 bytes in all. Only
+ * one of these screens can be in front at a time, and its text is only read
+ * while it is, so they now share this union, one struct per screen: 960 bytes,
+ * the Information page's.
+ *
+ * Why no screen can ever read another screen's text:
+ *  - Only grid_fill() (the struct of s_grid_pant) and cfg_fill() (cfg) write
+ *    here, plus grid_show(GRID_HUSO), which sets the order and the title before
+ *    its first grid_fill(). Every string a fill points a cell at is written
+ *    and terminated by that same fill; no fill reads what an earlier one left.
+ *  - Those pointers are only read through s_grid and s_cfg: by ui_grid_draw*()
+ *    and ui_cfg_draw*() right after a fill, by cel_resumen() right after
+ *    grid_fill(), and by the screenshot (capt_pinta(), capt_restaura()), which
+ *    draws the layer menu_capa() says is in front, without refilling it.
+ *  - The grid and the category screen are never open together: every *_show()
+ *    starts with menu_capas_suelta(), so s_menu_cfg_active implies
+ *    s_grid_pant == GRID_NADA. Every grid_fill() call is reached only with
+ *    s_grid_pant set, every cfg_fill() call only with s_menu_cfg_active (or
+ *    from cfg_show() itself), and grid_show()/cfg_show() fill before they
+ *    draw. So the layer in front is always the last one that filled this.
+ *  - Between grid pages, s_grid_pant only changes in grid_show(), which then
+ *    rewrites every cell of s_grid: none is left pointing at another page's
+ *    struct.
+ *  - No interrupt reads or writes any of it.
+ * The redraw cache of the measurements page, info_vivo_poll(), compares
+ * hashes taken right after its own grid_fill(), never this text across a
+ * screen change: sharing does not change what it redraws.
+ *
+ * The order of the fields of huso and sstv is the one that gives the
+ * shortest grid_fill() (12 bytes less than the order they were declared in).
+ */
+static union {
+    struct {                       /* GRID_AJUSTES */
+        char val[UIG_CELLS][16];
+    } aj;
+    struct {                       /* GRID_HUSO: set by grid_show() and grid_fill() */
+        char    cel[UIG_CELLS][3][18];
+        uint8_t orden[64];
+        char    titulo[40];
+    } huso;
+    struct {                       /* GRID_HFDL */
+        char khz[UIG_CELLS][10];
+        char ok[UIG_CELLS][12];
+    } hfdl;
+    struct {                       /* GRID_INFO: see info_valor() */
+        char val[UIG_CELLS][40];
+        char pie[UIG_CELLS][40];   /* INFO_PIE_MAX, checked where it is defined */
+    } info;
+    struct {                       /* GRID_SSTV */
+        char v3[UIG_CELLS][12];
+        char v2[UIG_CELLS][8];
+    } sstv;
+    struct {                       /* cfg_fill(): the settings and the memory bank */
+        char val[UIC_CELLS][20];
+    } cfg;
+} s_ui_txt;
+_Static_assert(sizeof s_ui_txt.huso.orden / sizeof s_ui_txt.huso.orden[0] >= 50U,
+               "s_ui_txt.huso.orden[] tiene que caber husos_n(): si crece la tabla de ciudades, crece esto");
 /* El banco parte esa cadena en dos: el numero de memoria en [0..2] y la
  * frecuencia a partir de [3]. La mas larga es "199.999,99", once bytes con
  * el cero final, o sea catorce en total. Si algun dia la frecuencia crece,
  * esto no compila en vez de pisar la celda de al lado. */
-_Static_assert(sizeof s_cfg_val[0] >= 14,
-               "s_cfg_val se queda corto para el numero mas la frecuencia");
+_Static_assert(sizeof s_ui_txt.cfg.val[0] >= 14,
+               "s_ui_txt.cfg.val se queda corto para el numero mas la frecuencia");
 
 /* Cuantas entradas tiene la pantalla activa y a que categoria pertenece cada
  * una: lo unico que distingue ajustes de bandas dentro de este bloque. */
@@ -16239,7 +16301,7 @@ static void cfg_fill(void)
              * en blanco porque entonces no se sabria que ahi se puede
              * grabar, que es justo lo que hay que anunciar.
              *
-             * El texto de la frecuencia se guarda en s_cfg_val[n], el
+             * El texto de la frecuencia se guarda en s_ui_txt.cfg.val[n], el
              * mismo sitio de paso que usan los valores de los ajustes:
              * son veinte caracteres por celda y aqui el peor caso -
              * "199.999,99" - son diez.
@@ -16272,17 +16334,17 @@ static void cfg_fill(void)
                  * siete"- y sobre todo es el que hay que apuntar para
                  * saber donde dejas el dedo cuatro segundos.
                  *
-                 * El texto se guarda en s_cfg_val[n], el mismo sitio de
+                 * El texto se guarda en s_ui_txt.cfg.val[n], el mismo sitio de
                  * paso que usan los valores de los ajustes: son veinte
                  * caracteres por celda, y aqui caben el numero -dos- y
                  * la frecuencia mas larga -"199.999,99", diez-.
                  */
                 uint8_t j = 0U;
 
-                s_cfg_val[n][j++] = (char)('0' + ((cel + 1U) / 10U));
-                s_cfg_val[n][j++] = (char)('0' + ((cel + 1U) % 10U));
-                s_cfg_val[n][j]   = '\0';
-                s_cfg.cel[n].extra = s_cfg_val[n];
+                s_ui_txt.cfg.val[n][j++] = (char)('0' + ((cel + 1U) / 10U));
+                s_ui_txt.cfg.val[n][j++] = (char)('0' + ((cel + 1U) % 10U));
+                s_ui_txt.cfg.val[n][j]   = '\0';
+                s_cfg.cel[n].extra = s_ui_txt.cfg.val[n];
 
                 if (!banco_lee(bk, cel, &m)) {
                     /* Vacia: se dice. No se deja en blanco, porque
@@ -16291,8 +16353,8 @@ static void cfg_fill(void)
                     s_cfg.cel[n].nombre = tr("libre", "empty");
                     s_cfg.cel[n].valor  = "";
                 } else {
-                    tune_freq_format_khz(m.hz, &s_cfg_val[n][3]);
-                    s_cfg.cel[n].nombre = &s_cfg_val[n][3];
+                    tune_freq_format_khz(m.hz, &s_ui_txt.cfg.val[n][3]);
+                    s_cfg.cel[n].nombre = &s_ui_txt.cfg.val[n][3];
                     s_cfg.cel[n].valor  = modo_sigla(m.modo);
                     /* La que esta sonando ahora mismo, marcada. Con la
                      * frecuencia Y el modo: la misma frecuencia en otro
@@ -16318,7 +16380,7 @@ static void cfg_fill(void)
             if (demod_mode_entry_active((uint8_t)k)) { s_cfg.marcada = n; }
         } else {
             const ajuste_t *a = &k_ajustes[k];
-            const char *v = ajuste_valor(a->id, s_cfg_val[n]);
+            const char *v = ajuste_valor(a->id, s_ui_txt.cfg.val[n]);
 
             s_cfg.cel[n].nombre = a->nombre[idioma()];
             /* Los que son una accion y no un valor dejan el renglon vacio,
@@ -18707,8 +18769,10 @@ static uint8_t s_info_toques;     /* cuantos llevamos en la fila de version */
  * campos esta acotado, asi que un chip de tres cifras de megabytes -o una
  * etiqueta de bus mas larga- se sale. Es justo la fila que existe para
  * detectar chips raros, o sea que el caso raro es su caso normal.
+ *
+ * It lives in s_ui_txt.info.val, shared with the other screens: see
+ * s_ui_txt, above cfg_fill().
  */
-static char s_info_val[UIG_CELLS][40];
 /*
  * EL TERCER RENGLON DE UNA FILA DE INFORMACION - 05/10/2026.
  *
@@ -18716,7 +18780,7 @@ static char s_info_val[UIG_CELLS][40];
  * fotos" no -son tres numeros distintos y la celda mide 192 px- y el valor
  * se salia por los dos lados de la celda.
  *
- * Va uno por celda, como s_info_val[]: la rejilla guarda PUNTEROS, asi que
+ * Va uno por celda, como s_ui_txt.info.val[]: la rejilla guarda PUNTEROS, asi que
  * un buffer compartido lo borraria la celda siguiente -y la fila se
  * quedaria con su tercer renglon vacio sin que nada avisara-.
  */
@@ -18736,7 +18800,11 @@ static char s_info_val[UIG_CELLS][40];
  * tools/pie_check.py y `make pie`.
  */
 #define INFO_PIE_MAX 40
-static char s_info_pie[UIG_CELLS][INFO_PIE_MAX];
+/* The footers live in s_ui_txt.info.pie, shared with the other screens: see
+ * s_ui_txt, above cfg_fill(). pie_txt() and pie_num() bound their writes by
+ * INFO_PIE_MAX, so the two have to agree. */
+_Static_assert(sizeof s_ui_txt.info.pie[0] == INFO_PIE_MAX,
+               "s_ui_txt.info.pie[] and INFO_PIE_MAX disagree");
 
 /*
  * Y PARA NO TENER QUE CONTAR - 06/10/2026.
@@ -18785,8 +18853,8 @@ static uint8_t pie_num(char *pie, uint8_t j, uint32_t v)
 /* Los dos renglones de abajo de cada celda de la rejilla de modos de SSTV.
  * Se arman al vuelo, como los de Informacion, asi que necesitan donde
  * vivir mientras se pintan. */
-static char s_sstv_v2[UIG_CELLS][8];
-static char s_sstv_v3[UIG_CELLS][12];
+/* They live in s_ui_txt.sstv, shared with the other screens: see s_ui_txt,
+ * above cfg_fill(). */
 
 
 
@@ -19897,7 +19965,7 @@ static const char *info_valor(uint8_t id, char *buf, char *pie)
          * Escribirlos con aj_u2s() a pelo era lo de siempre, y con DOS
          * contadores cabia. Con TRES ya no: el peor caso de un uint32_t
          * son diez cifras, y 3x10 mas las etiquetas son 46 bytes en un
-         * s_info_val[][40]. Seis fuera, encima de la celda de al lado.
+         * s_ui_txt.info.val[][40]. Seis fuera, encima de la celda de al lado.
          *
          * Y aunque cupiera en el buffer, no cabe en la CELDA: 192 px con
          * fuente proporcional dan para los tres a cuatro cifras y se
@@ -21152,7 +21220,8 @@ static const hfdl_canal_t k_hfdl_canales[] = {
 
 /* El texto de cada celda: "13.303" arriba y la estacion debajo. Se guarda
  * porque ui_grid no copia, solo apunta. */
-static char s_hfdl_khz_txt[UIG_CELLS][10];
+/* In s_ui_txt.hfdl.khz, with the "N ok" line in s_ui_txt.hfdl.ok, shared with
+ * the other screens: see s_ui_txt, above cfg_fill(). */
 
 /*
  * CUANTAS TRAMAS BUENAS HA DADO CADA CANAL. 25/09/2026.
@@ -21171,7 +21240,6 @@ static char s_hfdl_khz_txt[UIG_CELLS][10];
  * dato fresco es peor que ninguno. Se llena solo en un rato de escucha.
  */
 static uint16_t s_hfdl_aciertos[HFDL_CANAL_COUNT];
-static char     s_hfdl_ok_txt[UIG_CELLS][12];
 
 /*
  * LAS FRECUENCIAS DE FT8 - 27/09/2026.
@@ -21840,7 +21908,7 @@ static const char *grid_grupo_nombre(uint8_t g)
                                     : tr("La radio sobre sí misma",
                                          "The radio about itself")));
     case GRID_SSTV:    return tr("Modo de SSTV", "SSTV mode");
-    case GRID_HUSO:    return s_huso_titulo;
+    case GRID_HUSO:    return s_ui_txt.huso.titulo;
     case GRID_HFDL:    return (g == HFDL_GRUPO_NOCHE)
                        ? tr("HFDL de noche (bajo 10 MHz)", "HFDL at night (below 10 MHz)")
                        : tr("HFDL de día (sobre 10 MHz)", "HFDL by day (above 10 MHz)");
@@ -21968,7 +22036,7 @@ static void grid_fill(void)
         switch (s_grid_pant) {
         case GRID_AJUSTES: {
             const ajuste_t *a = &k_ajustes[primero + i];
-            const char *v = ajuste_valor(a->id, s_aj_val[i]);
+            const char *v = ajuste_valor(a->id, s_ui_txt.aj.val[i]);
             s_grid.cel[i].l1 = a->nombre[idioma()];
             /* Los ajustes que son una accion y no un valor dejan el renglon
              * vacio: la pantalla entera se toca, asi que poner "tocar" en
@@ -21979,35 +22047,35 @@ static void grid_fill(void)
         case GRID_HUSO: {
             uint16_t id = (uint16_t)(primero + i);
 
-            const uint8_t nc = (uint8_t)sizeof s_huso_cel[i][0];
+            const uint8_t nc = (uint8_t)sizeof s_ui_txt.huso.cel[i][0];
             char t[12];
 
             if (id == 0U) {
                 /* LA PRIMERA CELDA: medir, no elegir. */
-                (void)pega_txt(s_huso_cel[i][0], 0U, nc, tr("Medir", "Measure"));
+                (void)pega_txt(s_ui_txt.huso.cel[i][0], 0U, nc, tr("Medir", "Measure"));
                 if (s_huso_medida_hay) {
                     huso_txt(s_huso_medida, t, (uint8_t)sizeof t);
-                    (void)pega_txt(s_huso_cel[i][1], 0U, nc, t);
-                    (void)pega_txt(s_huso_cel[i][2], 0U, nc,
+                    (void)pega_txt(s_ui_txt.huso.cel[i][1], 0U, nc, t);
+                    (void)pega_txt(s_ui_txt.huso.cel[i][2], 0U, nc,
                                    tr("de la emisora", "from the station"));
                 } else {
-                    (void)pega_txt(s_huso_cel[i][1], 0U, nc, tr("no hay", "none"));
+                    (void)pega_txt(s_ui_txt.huso.cel[i][1], 0U, nc, tr("no hay", "none"));
                     /* Y SE DICE POR QUE, que es la diferencia entre una celda
                      * apagada y una celda que parece rota: DCF77 y ALS162 no
                      * emiten UTC, asi que con ellas esto no se puede medir
                      * aunque la señal entre perfecta. */
-                    (void)pega_txt(s_huso_cel[i][2], 0U, nc,
+                    (void)pega_txt(s_ui_txt.huso.cel[i][2], 0U, nc,
                                    tr("usa WWV/BPM/MSF", "use WWV/BPM/MSF"));
                 }
             } else {
-                uint8_t k = s_huso_orden[id - 1U];
+                uint8_t k = s_ui_txt.huso.orden[id - 1U];
                 const huso_ciudad_t *c = husos_fila(k);
                 uint8_t dd, mm, aa, hh, j;
 
                 huso_utc_ahora(&dd, &mm, &aa, &hh);
-                (void)pega_txt(s_huso_cel[i][0], 0U, nc, c->nombre);
+                (void)pega_txt(s_ui_txt.huso.cel[i][0], 0U, nc, c->nombre);
                 huso_txt(c->base, t, (uint8_t)sizeof t);
-                (void)pega_txt(s_huso_cel[i][1], 0U, nc, t);
+                (void)pega_txt(s_ui_txt.huso.cel[i][1], 0U, nc, t);
                 /*
                  * EL SEGUNDO NUMERO. Es el de HOY: base mas la regla de
                  * verano si esta vigente. Esta a la vista para que una regla
@@ -22015,13 +22083,13 @@ static void grid_fill(void)
                  * pared, es que esa fila se ha quedado atras. Ver husos.h.
                  */
                 huso_txt(husos_ahora(k, dd, mm, aa, hh), t, (uint8_t)sizeof t);
-                j = pega_txt(s_huso_cel[i][2], 0U, nc, tr("ahora", "now"));
-                j = pega_txt(s_huso_cel[i][2], j, nc, " ");
-                (void)pega_txt(s_huso_cel[i][2], j, nc, t);
+                j = pega_txt(s_ui_txt.huso.cel[i][2], 0U, nc, tr("ahora", "now"));
+                j = pega_txt(s_ui_txt.huso.cel[i][2], j, nc, " ");
+                (void)pega_txt(s_ui_txt.huso.cel[i][2], j, nc, t);
             }
-            s_grid.cel[i].l1 = s_huso_cel[i][0];
-            s_grid.cel[i].l2 = s_huso_cel[i][1];
-            s_grid.cel[i].l3 = s_huso_cel[i][2];
+            s_grid.cel[i].l1 = s_ui_txt.huso.cel[i][0];
+            s_grid.cel[i].l2 = s_ui_txt.huso.cel[i][1];
+            s_grid.cel[i].l3 = s_ui_txt.huso.cel[i][2];
             break;
         }
         case GRID_BANDAS: {
@@ -22077,20 +22145,20 @@ static void grid_fill(void)
 
             /* "13.303" con el punto de los miles, como la frecuencia de
              * arriba: leer "13303" en una rejilla cuesta un segundo mas. */
-            s_hfdl_khz_txt[i][j++] = (char)('0' + (k / 10000U) % 10U);
+            s_ui_txt.hfdl.khz[i][j++] = (char)('0' + (k / 10000U) % 10U);
             if (k >= 10000U) {
-                s_hfdl_khz_txt[i][j++] = (char)('0' + (k / 1000U) % 10U);
+                s_ui_txt.hfdl.khz[i][j++] = (char)('0' + (k / 1000U) % 10U);
             } else {
                 j = 0U;
-                s_hfdl_khz_txt[i][j++] = (char)('0' + (k / 1000U) % 10U);
+                s_ui_txt.hfdl.khz[i][j++] = (char)('0' + (k / 1000U) % 10U);
             }
-            s_hfdl_khz_txt[i][j++] = '.';
-            s_hfdl_khz_txt[i][j++] = (char)('0' + (k / 100U) % 10U);
-            s_hfdl_khz_txt[i][j++] = (char)('0' + (k / 10U) % 10U);
-            s_hfdl_khz_txt[i][j++] = (char)('0' + k % 10U);
-            s_hfdl_khz_txt[i][j] = '\0';
+            s_ui_txt.hfdl.khz[i][j++] = '.';
+            s_ui_txt.hfdl.khz[i][j++] = (char)('0' + (k / 100U) % 10U);
+            s_ui_txt.hfdl.khz[i][j++] = (char)('0' + (k / 10U) % 10U);
+            s_ui_txt.hfdl.khz[i][j++] = (char)('0' + k % 10U);
+            s_ui_txt.hfdl.khz[i][j] = '\0';
 
-            s_grid.cel[i].l1 = s_hfdl_khz_txt[i];
+            s_grid.cel[i].l1 = s_ui_txt.hfdl.khz[i];
             s_grid.cel[i].l2 = c->estacion;
 
             /* Lo que ESTA frecuencia te ha dado hoy. Vacio si nada: un "0"
@@ -22098,13 +22166,13 @@ static void grid_fill(void)
              * nada" cuando lo que dice es "todavia no has escuchado". */
             if (s_hfdl_aciertos[primero + i] != 0U) {
                 uint8_t j = 0U;
-                aj_u2s(s_hfdl_ok_txt[i], s_hfdl_aciertos[primero + i]);
-                while (s_hfdl_ok_txt[i][j] != '\0') { j++; }
-                s_hfdl_ok_txt[i][j++] = ' ';
-                s_hfdl_ok_txt[i][j++] = 'o';
-                s_hfdl_ok_txt[i][j++] = 'k';
-                s_hfdl_ok_txt[i][j] = '\0';
-                s_grid.cel[i].l3 = s_hfdl_ok_txt[i];
+                aj_u2s(s_ui_txt.hfdl.ok[i], s_hfdl_aciertos[primero + i]);
+                while (s_ui_txt.hfdl.ok[i][j] != '\0') { j++; }
+                s_ui_txt.hfdl.ok[i][j++] = ' ';
+                s_ui_txt.hfdl.ok[i][j++] = 'o';
+                s_ui_txt.hfdl.ok[i][j++] = 'k';
+                s_ui_txt.hfdl.ok[i][j] = '\0';
+                s_grid.cel[i].l3 = s_ui_txt.hfdl.ok[i];
             } else {
                 s_grid.cel[i].l3 = "";
             }
@@ -22115,10 +22183,10 @@ static void grid_fill(void)
         case GRID_INFO: {
             uint8_t id = (uint8_t)(primero + i);
             s_grid.cel[i].l1 = k_info_nombres[id][idioma()];
-            s_info_pie[i][0] = '\0';
-            s_grid.cel[i].l2 = info_valor(id, s_info_val[i], s_info_pie[i]);
+            s_ui_txt.info.pie[i][0] = '\0';
+            s_grid.cel[i].l2 = info_valor(id, s_ui_txt.info.val[i], s_ui_txt.info.pie[i]);
             /* Y el tercer renglon, si esa fila lo ha rellenado. */
-            s_grid.cel[i].l3 = (s_info_pie[i][0] != '\0') ? s_info_pie[i] : 0;
+            s_grid.cel[i].l3 = (s_ui_txt.info.pie[i][0] != '\0') ? s_ui_txt.info.pie[i] : 0;
             break;
         }
         case GRID_SSTV: {
@@ -22147,16 +22215,16 @@ static void grid_fill(void)
                 uint32_t seg = (uint32_t)((linea_s * (float)pl.alto /
                                            (float)pl.lineas_img) + 0.5f);
                 uint8_t  j = 0U;
-                aj_u2s(s_sstv_v2[i], seg);
-                while (s_sstv_v2[i][j] != '\0') { j++; }
-                s_sstv_v2[i][j++] = ' '; s_sstv_v2[i][j++] = 's'; s_sstv_v2[i][j] = '\0';
+                aj_u2s(s_ui_txt.sstv.v2[i], seg);
+                while (s_ui_txt.sstv.v2[i][j] != '\0') { j++; }
+                s_ui_txt.sstv.v2[i][j++] = ' '; s_ui_txt.sstv.v2[i][j++] = 's'; s_ui_txt.sstv.v2[i][j] = '\0';
                 j = 0U;
-                aj_u2s(s_sstv_v3[i], (uint32_t)pl.ancho);
-                while (s_sstv_v3[i][j] != '\0') { j++; }
-                s_sstv_v3[i][j++] = 'x';
-                aj_u2s(&s_sstv_v3[i][j], (uint32_t)pl.alto);
-                s_grid.cel[i].l2 = s_sstv_v2[i];
-                s_grid.cel[i].l3 = s_sstv_v3[i];
+                aj_u2s(s_ui_txt.sstv.v3[i], (uint32_t)pl.ancho);
+                while (s_ui_txt.sstv.v3[i][j] != '\0') { j++; }
+                s_ui_txt.sstv.v3[i][j++] = 'x';
+                aj_u2s(&s_ui_txt.sstv.v3[i][j], (uint32_t)pl.alto);
+                s_grid.cel[i].l2 = s_ui_txt.sstv.v2[i];
+                s_grid.cel[i].l3 = s_ui_txt.sstv.v3[i];
             }
             if ((uint8_t)(k + 1U) == s_sstv_modo_idx) { s_grid.marcada = i; }
             break;
@@ -23078,7 +23146,7 @@ static void grid_apply(uint8_t cel)
             if (s_huso_medida_hay) { hora_huso_mide(s_huso_medida); }
         } else {
             uint8_t dd, mm, aa, hh;
-            uint8_t k = s_huso_orden[primero + cel - 1U];
+            uint8_t k = s_ui_txt.huso.orden[primero + cel - 1U];
 
             huso_utc_ahora(&dd, &mm, &aa, &hh);
             hora_huso_pon(husos_ahora(k, dd, mm, aa, hh));
@@ -23598,20 +23666,20 @@ static void grid_show(grid_pant_t p)
         if (!ft8_decoder_grid_e4(ft8_decoder_get_own_grid(), 6, &lat, &lon)) {
             lat = 0; lon = 0;
         }
-        husos_ordena(lat, lon, s_huso_orden);
+        husos_ordena(lat, lon, s_ui_txt.huso.orden);
 
         /* El titulo lleva el huso que hay puesto AHORA y de donde salio: es
          * la unica forma de que se vea que una emisora ya lo dijo y que por
          * eso tocar una ciudad no va a cambiarlo. */
-        const uint8_t nt = (uint8_t)sizeof s_huso_titulo;
+        const uint8_t nt = (uint8_t)sizeof s_ui_txt.huso.titulo;
         uint8_t k;
 
         huso_txt(hora_huso(), t, (uint8_t)sizeof t);
-        k = pega_txt(s_huso_titulo, 0U, nt, tr("Huso", "Time zone"));
-        k = pega_txt(s_huso_titulo, k, nt, " ");
-        k = pega_txt(s_huso_titulo, k, nt, t);
-        k = pega_txt(s_huso_titulo, k, nt, " - ");
-        (void)pega_txt(s_huso_titulo, k, nt,
+        k = pega_txt(s_ui_txt.huso.titulo, 0U, nt, tr("Huso", "Time zone"));
+        k = pega_txt(s_ui_txt.huso.titulo, k, nt, " ");
+        k = pega_txt(s_ui_txt.huso.titulo, k, nt, t);
+        k = pega_txt(s_ui_txt.huso.titulo, k, nt, " - ");
+        (void)pega_txt(s_ui_txt.huso.titulo, k, nt,
                        hora_huso_medido()
                        ? tr("lo dijo una emisora", "a station said so")
                        : tr("elige tu ciudad", "pick your city"));
