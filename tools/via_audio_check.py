@@ -42,6 +42,14 @@ DUENO = {
     's_q_buf':         'demod_am_process_raw',
     's_env':           'demod_am_process_raw',
     's_audio_out':     'demod_am_process_raw',
+    # 14/11/2026: the decimated-domain scratch moved into the union's slack
+    # (est.i_dec .. est.ssb_dec), and two buffers alias them by name.
+    's_i_dec':         'demod_am_process_raw',
+    's_q_dec':         'demod_am_process_raw',
+    's_q_hilbert_out': 'demod_am_process_raw',
+    's_ssb_dec':       'demod_am_process_raw',
+    's_nr_buf':        'demod_am_process_raw',
+    's_sm_fil_buf':    'demod_am_process_raw',
 }
 
 

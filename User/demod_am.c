@@ -1818,6 +1818,26 @@ static union {
          * -ver semibanda_interpola()- y esto tiene sitio para las 512.
          */
         int16_t   audio_out[SDR_RX_BLOCK_SAMPLES_WFM * 2U];
+        /*
+         * THE DECIMATED-DOMAIN SCRATCH, IN THE SLACK - 14/11/2026.
+         *
+         * Up to here this set took 7,168 bytes of the 8,192 the WFM set
+         * takes, and these four 64-float buffers are exactly the 1,024
+         * left. They were separate static arrays; like everything else
+         * in this struct they are written before they are read in every
+         * block, inside demod_am_process_raw() only (passed down by
+         * argument to fases_combina() and sam_banda_lateral()), and no
+         * consumer keeps a pointer to them past the call. Two more
+         * buffers borrow them by name: s_nr_buf is ssb_dec and
+         * s_sm_fil_buf is q_hilbert_out - see their #defines for why the
+         * lifetimes never overlap. tools/via_audio_check.py watches all
+         * six names. The two sets are now the same size, which the
+         * assert below still allows; one more byte here would not.
+         */
+        float32_t i_dec[DEC_BLOCK_SAMPLES_MAX];         /* decimated I */
+        float32_t q_dec[DEC_BLOCK_SAMPLES_MAX];         /* decimated Q */
+        float32_t q_hilbert_out[DEC_BLOCK_SAMPLES_MAX]; /* Hilbert(Q), 90deg-shifted, @ 12kHz */
+        float32_t ssb_dec[DEC_BLOCK_SAMPLES_MAX];       /* combined SSB audio @ 12kHz */
     } est;                      /* estrecho: AM, SSB, NFM */
 } s_via;
 
@@ -2328,11 +2348,13 @@ _Static_assert(DECIM_COEFFS_48K_TAPS <= DECIM_COEFFS_96K_TAPS
  * DEC_BLOCK_SAMPLES the way every previous Fs move left this - only
  * the first s_dec_block_samples (32 or 64, whichever rate is
  * currently active - see demod_am_set_active_rate()) entries of each
- * are actually used/valid in any given block. */
-static float32_t s_i_dec[DEC_BLOCK_SAMPLES_MAX];         /* decimated I */
-static float32_t s_q_dec[DEC_BLOCK_SAMPLES_MAX];         /* decimated Q */
-static float32_t s_q_hilbert_out[DEC_BLOCK_SAMPLES_MAX]; /* Hilbert(Q), 90deg-shifted, @ 12kHz */
-static float32_t s_ssb_dec[DEC_BLOCK_SAMPLES_MAX];       /* combined SSB audio @ 12kHz */
+ * are actually used/valid in any given block.
+ * Since 14/11/2026 they live in the s_via union's slack: see the
+ * comment on its est.i_dec. */
+#define s_i_dec          (s_via.est.i_dec)          /* decimated I */
+#define s_q_dec          (s_via.est.q_dec)          /* decimated Q */
+#define s_q_hilbert_out  (s_via.est.q_hilbert_out)  /* Hilbert(Q), 90deg-shifted, @ 12kHz */
+#define s_ssb_dec        (s_via.est.ssb_dec)        /* combined SSB audio @ 12kHz */
 
 /*
  * --- NR INTEGRATION (Spectral Subtraction, 03/08/2026, revised 04/08/2026) ---
@@ -2365,7 +2387,14 @@ static arm_fir_decimate_instance_f32    s_nr_decim_inst;
 static arm_fir_interpolate_instance_f32 s_nr_interp_inst;
 static float32_t s_nr_decim_state[DECIM_STATE_SIZE_MAX] TCMRAM_BSS;
 static float32_t s_nr_interp_state[INTERP_STATE_SIZE_MAX] TCMRAM_BSS;
-static float32_t s_nr_buf[DEC_BLOCK_SAMPLES_MAX]; /* decimated audio (AM only), in place through nr_ss_process() */
+/* Decimated audio (AM/SAM NR, and NFM's SSTV feed), in place through
+ * nr_ss_process(). Since 14/11/2026 it is the same bytes as s_ssb_dec:
+ * s_ssb_dec only lives inside the USB/LSB branch and inside
+ * sam_banda_lateral(), and both are over - the sideband audio already
+ * interpolated into s_env - before either use of s_nr_buf, which are in
+ * the NFM branch and in the AM/SAM NR step after the audio filter. Both
+ * are written in full before they are read in each block. */
+#define s_nr_buf (s_via.est.ssb_dec)
 
 /* nr_ss.h fixes its own block size independently (see its comment on
  * NR_SS_BLOCK_SAMPLES) - previously guaranteed via a compile-time
@@ -2444,9 +2473,10 @@ static void rtty_process_chunks(const float32_t *buf, uint32_t n)
 /* Delay-matching for decimated I: same technique as before (linear-
  * phase FIR group delay = (numTaps-1)/2, history carried across
  * blocks), just at the 12kHz rate now - so the history is only 31
- * samples of the 32-sample decimated block. */
+ * samples of the 32-sample decimated block. (14/11/2026: the delayed
+ * copy, s_i_delayed[], is gone - fases_combina() reads this history and
+ * the block directly.) */
 static float32_t s_i_delay_hist[HILBERT_GROUP_DELAY_DEC];
-static float32_t s_i_delayed[HILBERT_GROUP_DELAY_DEC + DEC_BLOCK_SAMPLES_MAX];
 
 /* El modo de demodulacion; ver demod_am.h. Un uint8_t pelado, sin
  * seccion critica: main.c lo escribe desde el bucle principal y la
@@ -3172,7 +3202,13 @@ static float s_sm_caida = 0.98780f;   /* per-block factor for SMETER_FALL_DB_S, 
 static arm_biquad_casd_df1_inst_f32 s_sm_fil_inst;
 static float s_sm_fil_coef[AUDIOFIL_COEFS];
 static float s_sm_fil_state[AUDIOFIL_ETAPAS * 4U];
-static float s_sm_fil_buf[DEC_BLOCK_SAMPLES_48K];   /* the larger of the two decimated blocks */
+/* The filtered copy, one decimated block. Since 14/11/2026 it is the same
+ * bytes as s_q_hilbert_out, which only lives inside fases_combina(): the
+ * meter filters s_ssb_dec into it after fases_combina() has returned, and
+ * reads it right there. */
+#define s_sm_fil_buf (s_via.est.q_hilbert_out)
+_Static_assert(DEC_BLOCK_SAMPLES_48K <= DEC_BLOCK_SAMPLES_MAX,
+               "the meter's filtered block must fit in q_hilbert_out");
 static float s_sm_fil_lo = -1.0f, s_sm_fil_hi = -1.0f;
 
 static void smeter_bloque(float pw)
@@ -5297,29 +5333,44 @@ void demod_wfm_process_raw(const int16_t *raw_interleaved)
  * sale de SSB_USB_SIGN / SSB_LSB_SIGN, los mismos para los dos llamadores:
  * asi "superior" quiere decir lo mismo en SAM que en banda lateral, que es
  * lo unico que se puede pedir de un ajuste que se llama igual.
+ *
+ * `q_hilb` is where the Hilbert output goes (s_q_hilbert_out, one
+ * decimated block): passed in, like the others, because it lives in the
+ * s_via union and only demod_am_process_raw() may name it.
  */
 static void fases_combina(const float32_t *i_dec, const float32_t *q_dec,
-                          float32_t sign, float32_t *fuera)
+                          float32_t sign, float32_t *q_hilb, float32_t *fuera)
 {
     uint32_t k;
+    uint32_t n_hist;
 
     /* 2a. Hilbert-shift the decimated Q (90 degrees across the
      * audio band, now with proper coverage down to ~300Hz - see
      * the design numbers above HILBERT_COEFFS). */
-    fir_chunks(&s_hilbert_inst, q_dec, s_q_hilbert_out, s_dec_block_samples);
+    fir_chunks(&s_hilbert_inst, q_dec, q_hilb, s_dec_block_samples);
 
-    /* 2b. Delay-match the decimated I by the Hilbert's group
-     * delay: history (previous block's tail) followed by the
-     * current block, so s_i_delayed[k] for k=0..DEC_BLOCK_SAMPLES-1
-     * equals I_dec[k - HILBERT_GROUP_DELAY_DEC] across the block
-     * boundary. */
-    for (k = 0; k < HILBERT_GROUP_DELAY_DEC; k++) {
-        s_i_delayed[k] = s_i_delay_hist[k];
+    /* 2b. Delay-match the decimated I by the Hilbert's group delay
+     * and 2c. combine: one sideband adds, the other cancels. Output k
+     * takes I_dec[k - HILBERT_GROUP_DELAY_DEC] across the block
+     * boundary: from the history (previous block's tail) for the first
+     * HILBERT_GROUP_DELAY_DEC samples, from this block after that.
+     *
+     * 14/11/2026: history and block used to be copied into one delayed
+     * array first, and the history updated BEFORE this combine. Reading
+     * both where they are gives the same values with 380 bytes less, but
+     * only if the history is updated AFTER the combine has read it -
+     * hence the order here. */
+    n_hist = (s_dec_block_samples < HILBERT_GROUP_DELAY_DEC)
+           ? s_dec_block_samples : HILBERT_GROUP_DELAY_DEC;
+    for (k = 0; k < n_hist; k++) {
+        fuera[k] = s_i_delay_hist[k] + sign * q_hilb[k];
     }
-    for (k = 0; k < s_dec_block_samples; k++) {
-        s_i_delayed[HILBERT_GROUP_DELAY_DEC + k] = i_dec[k];
+    for (k = HILBERT_GROUP_DELAY_DEC; k < s_dec_block_samples; k++) {
+        fuera[k] = i_dec[k - HILBERT_GROUP_DELAY_DEC] + sign * q_hilb[k];
     }
-    /* GCC's -Warray-bounds flags the line below at -O2 (a false
+
+    /* 2d. This block's tail becomes the next block's history.
+     * GCC's -Warray-bounds flags the line below at -O2 (a false
      * positive, exhaustively checked: s_dec_block_samples only
      * ever takes two real values, DEC_BLOCK_SAMPLES_96K(32) or
      * DEC_BLOCK_SAMPLES_48K(64), set exclusively by demod_am_set_
@@ -5374,11 +5425,6 @@ static void fases_combina(const float32_t *i_dec, const float32_t *q_dec,
             s_i_delay_hist[k] = i_dec[base + k];
         }
     }
-
-    /* 2c. Combine: one sideband adds, the other cancels. */
-    for (k = 0; k < s_dec_block_samples; k++) {
-        fuera[k] = s_i_delayed[k] + sign * s_q_hilbert_out[k];
-    }
 }
 
 /*
@@ -5398,7 +5444,8 @@ static void fases_combina(const float32_t *i_dec, const float32_t *q_dec,
  * funcion auxiliar" contra el que avisa su cabecera.
  */
 static void sam_banda_lateral(float32_t *ib, float32_t *qb, float32_t *salida,
-                              float32_t mez)
+                              float32_t mez, float32_t *i_dec, float32_t *q_dec,
+                              float32_t *q_hilb, float32_t *ssb_dec)
 {
     float32_t sign = (s_sam_banda == (uint8_t)SAM_BANDA_USB)
                    ? SSB_USB_SIGN : SSB_LSB_SIGN;
@@ -5411,10 +5458,10 @@ static void sam_banda_lateral(float32_t *ib, float32_t *qb, float32_t *salida,
     sam_bloque_cuad_mez(&s_sam, ib, qb, ib, qb,
                         (uint32_t)SDR_RX_BLOCK_SAMPLES,
                         demod_am_active_fs_hz(), mez);
-    fir_decimate_chunks(&s_decim_i_inst, ib, s_i_dec, SDR_RX_BLOCK_SAMPLES);
-    fir_decimate_chunks(&s_decim_q_inst, qb, s_q_dec, SDR_RX_BLOCK_SAMPLES);
-    fases_combina(s_i_dec, s_q_dec, sign, s_ssb_dec);
-    fir_interpolate_chunks(&s_interp_inst, s_ssb_dec, salida,
+    fir_decimate_chunks(&s_decim_i_inst, ib, i_dec, SDR_RX_BLOCK_SAMPLES);
+    fir_decimate_chunks(&s_decim_q_inst, qb, q_dec, SDR_RX_BLOCK_SAMPLES);
+    fases_combina(i_dec, q_dec, sign, q_hilb, ssb_dec);
+    fir_interpolate_chunks(&s_interp_inst, ssb_dec, salida,
                            s_dec_block_samples);
 }
 
@@ -6189,7 +6236,8 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
                            (uint32_t)SDR_RX_BLOCK_SAMPLES,
                            demod_am_active_fs_hz());
             } else {
-                sam_banda_lateral(s_i_buf, s_q_buf, s_env, 1.0f);
+                sam_banda_lateral(s_i_buf, s_q_buf, s_env, 1.0f,
+                                  s_i_dec, s_q_dec, s_q_hilbert_out, s_ssb_dec);
             }
         } else if (s_sam_banda != (uint8_t)SAM_BANDA_AMBAS) {
             /*
@@ -6227,7 +6275,8 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
              * justo lo que no arreglaba nada cuando lo que sonaba era la
              * intrusa.
              */
-            sam_banda_lateral(s_i_buf, s_q_buf, s_env, s_sam_mezcla);
+            sam_banda_lateral(s_i_buf, s_q_buf, s_env, s_sam_mezcla,
+                              s_i_dec, s_q_dec, s_q_hilbert_out, s_ssb_dec);
         } else {
             float32_t media = 0.0f;
             float32_t k = s_sam_mezcla;
@@ -6373,7 +6422,7 @@ void demod_am_process_raw(const int16_t *raw_interleaved)
             hfdl_modo_mete(s_i_dec, s_q_dec, s_dec_block_samples);
         }
 
-        fases_combina(s_i_dec, s_q_dec, sign, s_ssb_dec);
+        fases_combina(s_i_dec, s_q_dec, sign, s_q_hilbert_out, s_ssb_dec);
 
         /*
          * The S-meter's sideband power, HERE: one sideband at 12 kHz, before the noise reduction and the
