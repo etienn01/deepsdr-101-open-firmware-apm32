@@ -38566,12 +38566,21 @@ static float32_t s_zoom_s3_i[SDR_RX_BLOCK_SAMPLES / 8U] TCMRAM_BSS;
 static float32_t s_zoom_s3_q[SDR_RX_BLOCK_SAMPLES / 8U] TCMRAM_BSS;
 
 /* Accumulates decimated samples across as many raw blocks as it takes
- * to fill one FFT_SIZE window (2/4/8 raw blocks for ZOOM_2X/4X/8X -
+ * to fill one FFT window (2/4/8 raw blocks for ZOOM_2X/4X/8X -
  * see spec_zoom_t's comment). int16_t, not float32: fft_compute_db_iq()
  * takes int16_t input (same type sdr_rx.c's raw blocks use) - cheaper
- * to convert once here than to touch fft.c's signature for this. */
-static int16_t s_zoom_acc_i[FFT_SIZE];
-static int16_t s_zoom_acc_q[FFT_SIZE];
+ * to convert once here than to touch fft.c's signature for this.
+ *
+ * The window is one raw block, SDR_RX_BLOCK_SAMPLES (256), not FFT_SIZE
+ * (512): the zoom only runs at 48/96 kHz (zoom_cabe()), where a block is
+ * 256 samples, and sdr_spectrum_waterfall_tick() sets s_fft_bins to the
+ * block size (no two-block window when zoomed) before it calls
+ * zoom_process_block(). The upper half of a FFT_SIZE array was never
+ * written. zoom_process_block() also stops at ZOOM_ACC_LEN, so a
+ * mismatch could only leave the window unfinished, never overrun it. */
+#define ZOOM_ACC_LEN SDR_RX_BLOCK_SAMPLES
+static int16_t s_zoom_acc_i[ZOOM_ACC_LEN];
+static int16_t s_zoom_acc_q[ZOOM_ACC_LEN];
 static uint16_t s_zoom_acc_count = 0U;
 
 static void zoom_decimators_init(void)
@@ -38617,7 +38626,7 @@ static void zoom_decimators_init(void)
  * frequency if needed, runs however many cascaded x2 stages the
  * current zoom level calls for, and appends the result to the
  * accumulator. Returns 1 when the accumulator just became FULL (a
- * fresh FFT_SIZE window is ready in s_zoom_acc_i/q), 0 otherwise -
+ * fresh s_fft_bins window is ready in s_zoom_acc_i/q), 0 otherwise -
  * the caller only computes/draws a new frame on a 1.
  */
 /* El oscilador del recentrado del zoom. Fase propia, separada de la de
@@ -38686,7 +38695,8 @@ static uint8_t zoom_process_block(void)
         out_len = SDR_RX_BLOCK_SAMPLES / 8U;
     }
 
-    for (n = 0; n < out_len && s_zoom_acc_count < s_fft_bins;
+    for (n = 0; n < out_len && s_zoom_acc_count < s_fft_bins
+                && s_zoom_acc_count < ZOOM_ACC_LEN;
          n++, s_zoom_acc_count++) {
         float32_t vi = out_i[n];
         float32_t vq = out_q[n];
