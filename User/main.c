@@ -39337,14 +39337,40 @@ static void franja_arriba_tick(void)
  * noise in light blue, white and yellow. The spectrum trace keeps the auto scale's own floor.
  */
 #include "spec_agc.h"
+/*
+ * The floor also follows how many FFTs each waterfall row averages. A row is the mean, in dB, of the FFTs that came
+ * in during its time: its noise mean does not depend on that count, but its spread does - 5.57 dB per pixel for one
+ * FFT (the spread of 10*log10 of an exponential power), divided by sqrt(N) for N. With a fixed floor, the faster speeds
+ * (and 192 kHz, where about one FFT fits in a frame: measured 1.2 on the tested unit) lit the noise up in the palette
+ * while its level had not moved. So the floor sits APM32_WF_NOISE_DB under the noise median plus one row spread:
+ * the noise's upper sigma lands at the same colour whatever the speed. 5 dB keeps about the look of the 2 dB margin
+ * it replaces at 96 kHz "Fast" (two or three FFTs per row); 0 = the fixed 2 dB margin.
+ *
+ * The count is smoothed over rows (1/8 per row), so the floor does not jump from one row to the next when frames
+ * alternate between one and two FFTs. The legend shows this floor, so it moves with the speed by up to 3-4 dB.
+ */
+#ifndef APM32_WF_NOISE_DB
+#define APM32_WF_NOISE_DB 5
+#endif
+#define WF_SIGMA_1FFT_DB 5.57f
+static float s_wf_fft_fila = 1.0f;   /* FFTs per waterfall row, smoothed */
+static void wf_ruido_fila(uint32_t n)
+{
+    if (n != 0U) { s_wf_fft_fila += ((float)n - s_wf_fft_fila) * 0.125f; }
+}
 static float wf_color_floor(float db_min)
 {
     float f;
     if (!s_spec_agc_enabled) { return db_min; }
+#if APM32_WF_NOISE_DB > 0
+    f = spec_agc_mediana() - (float)APM32_WF_NOISE_DB + WF_SIGMA_1FFT_DB / sqrtf(s_wf_fft_fila);
+#else
     f = spec_agc_mediana() - 2.0f;
+#endif
     return (f > db_min) ? f : db_min;
 }
 #define WF_COLOR_FLOOR wf_color_floor(s_db_min)
+#define WF_RUIDO_FILA(n) wf_ruido_fila(n)
 /*
  * APM32 build: the top of the waterfall's colour scale is the colour floor plus APM32_WF_RANGE_DB (strong signals
  * saturate) instead of the spectrum's own top, which a strong station pushes 55-60 dB above the noise and which
@@ -39368,6 +39394,7 @@ static float wf_color_top(float floor_db, float db_max)
 #else
 #define WF_COLOR_FLOOR s_db_min
 #define WF_COLOR_TOP s_db_max
+#define WF_RUIDO_FILA(n) ((void)0)
 #endif
 
 /*
@@ -40466,9 +40493,23 @@ static void sdr_spectrum_waterfall_tick(void)
             float inv_a = parte ? (1.0f / (float)s_wf_mitad_n) : 1.0f;
             float inv_b = parte ? (1.0f / (float)(s_db_count - s_wf_mitad_n))
                                 : 1.0f;
+            float suelo, esc;
+
+#ifdef CHIP_APM32F407
+            /* The FFTs behind each of the two rows (see wf_color_floor()). */
+            if (parte) {
+                WF_RUIDO_FILA(s_wf_mitad_n);
+                WF_RUIDO_FILA(s_db_count - s_wf_mitad_n);
+            } else {
+                WF_RUIDO_FILA(s_db_count);
+                WF_RUIDO_FILA(s_db_count);
+            }
+#endif
             /* La escala, una vez por las dos lineas: lleva la division.
-             * Ver spectrum_colormap_escala(). */
-            float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, WF_COLOR_TOP);
+             * Ver spectrum_colormap_escala(). The floor too: on the APM32
+             * it is no longer a plain load. */
+            suelo = WF_COLOR_FLOOR;
+            esc = spectrum_colormap_escala(suelo, WF_COLOR_TOP);
 
             /* Primera mitad del frame -o el frame entero, si no hay dos
              * medidas que repartir. The halves come from the unshifted sums,
@@ -40479,7 +40520,7 @@ static void sdr_spectrum_waterfall_tick(void)
                 uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
                 line[x] = spectrum_colormap_idx(parte ? (s_wf_buf.mitad[wf_giro(bin, giro, nbins)] * inv_a)
                                                       : s_db_frame[bin],
-                                                WF_COLOR_FLOOR, esc);
+                                                suelo, esc);
             }
             waterfall_push_line(line); s_wf_lineas++;
 
@@ -40490,7 +40531,7 @@ static void sdr_spectrum_waterfall_tick(void)
                     uint32_t bin = wf_giro(((uint32_t)x * nbins) / WATERFALL_WIDTH, giro, nbins);
                     line[x] = spectrum_colormap_idx(
                                   (s_db_sum[bin] - s_wf_buf.mitad[bin]) * inv_b,
-                                  WF_COLOR_FLOOR, esc);
+                                  suelo, esc);
                 }
             }
             waterfall_push_line(line); s_wf_lineas++;
@@ -40504,21 +40545,34 @@ static void sdr_spectrum_waterfall_tick(void)
              * El primero COPIA en vez de sumar, asi que un cambio de
              * velocidad -que pone s_wf_frames a 0- no arrastra lo que
              * hubiera quedado dentro de la velocidad anterior. */
+#ifdef CHIP_APM32F407
+            static uint8_t s_wf_fft_suma;   /* FFTs in the row being summed (see wf_color_floor()) */
+#endif
             if (s_wf_frames == 0U) {
                 for (b = 0; b < nbins; b++) { s_wf_buf.sum[b] = s_db_frame[b]; }
+#ifdef CHIP_APM32F407
+                s_wf_fft_suma = (uint8_t)s_db_count;
+#endif
             } else {
                 for (b = 0; b < nbins; b++) { s_wf_buf.sum[b] += s_db_frame[b]; }
+#ifdef CHIP_APM32F407
+                s_wf_fft_suma = (uint8_t)(s_wf_fft_suma + s_db_count);
+#endif
             }
             s_wf_frames++;
 
             if (s_wf_frames >= k_wf[s_wf_vel].div) {
                 float inv = 1.0f / (float)s_wf_frames;
-                float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, WF_COLOR_TOP);
+                float suelo, esc;
+
+                WF_RUIDO_FILA(s_wf_fft_suma);
+                suelo = WF_COLOR_FLOOR;
+                esc = spectrum_colormap_escala(suelo, WF_COLOR_TOP);
 
                 for (x = 0; x < WATERFALL_WIDTH; x++) {
                     uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
                     line[x] = spectrum_colormap_idx(s_wf_buf.sum[bin] * inv,
-                                                    WF_COLOR_FLOOR, esc);
+                                                    suelo, esc);
                 }
                 waterfall_push_line(line); s_wf_lineas++;
                 waterfall_blit(SPEC_TRACE_X, WF_Y, spectrum_colormap_lut());
