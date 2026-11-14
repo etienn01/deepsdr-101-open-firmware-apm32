@@ -804,8 +804,24 @@ static void menu_detail_value_redraw(void);
 #define TUNE_MIN_HZ 30000UL
 #define TUNE_MAX_HZ 180000000UL
 
-static float   s_db_frame[FFT_BINS_IQ]; /* crudo: lo que baja a la cascada */
-static float   s_db_traza[FFT_BINS_IQ]; /* suavizado: lo que se dibuja */
+/* The zero-wait, CPU-only RAM at 0x10000000 (the GD32's TCM, the APM32's
+ * CCM). Defined once, here, before the first buffer of this file that goes
+ * there; the long comment on why things live there is further down, at the
+ * zoom decimators. No DMA channel can reach this RAM: only buffers that the
+ * CPU alone reads and writes may use it. */
+#ifndef TCMRAM_BSS
+#define TCMRAM_BSS __attribute__((section(".tcmram")))
+#endif
+
+/* IN THE TCM - 14/11/2026: 4,096 bytes off main SRAM. Only the CPU touches
+ * either array. The frame is averaged from s_db_sum, shifted by the tuning
+ * offset, and read by the trace smoothing, the waterfall feed (which turns
+ * it into palette indexes in its own line), the I/Q balance probe and CAT
+ * ZS/ZP. The trace is read by the spectrum AGC, the tap-to-tune snap and
+ * spectrum_draw(), which builds pixels in the gfx2 band - and only that
+ * band is ever handed to the display DMA. */
+static float   s_db_frame[FFT_BINS_IQ] TCMRAM_BSS; /* crudo: lo que baja a la cascada */
+static float   s_db_traza[FFT_BINS_IQ] TCMRAM_BSS; /* suavizado: lo que se dibuja */
 /*
  * CUANTOS BINS DE ESOS SE ESTAN USANDO DE VERDAD - 24/10/2026.
  *
@@ -38467,13 +38483,8 @@ fin:
  */
 static int16_t s_rx_i[SDR_RX_BLOCK_SAMPLES_MAX];
 static int16_t s_rx_q[SDR_RX_BLOCK_SAMPLES_MAX];
-/* La RAM de ciclo cero. El comentario largo de por que vive ahi lo que
- * vive ahi esta mas abajo, donde los diezmadores del zoom; aqui hace falta
- * antes, y definirlo dos veces seria pedir que un dia digan cosas
- * distintas. */
-#ifndef TCMRAM_BSS
-#define TCMRAM_BSS __attribute__((section(".tcmram")))
-#endif
+/* TCMRAM_BSS, the zero-wait CPU-only RAM, is defined once near the top of
+ * the file, before s_db_frame. */
 
 /*
  * AL TCM - 24/10/2026. Con la FFT en 512 estos arrays doblan, y la SRAM
