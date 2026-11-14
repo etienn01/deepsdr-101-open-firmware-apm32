@@ -42,24 +42,6 @@ void semibanda_reset(void)
 }
 
 /*
- * Una muestra de entrada por su indice ABSOLUTO dentro del bloque, que
- * puede ser negativo: los negativos vienen de la cola del bloque
- * anterior, y los primeros SEMIBANDA_HIST de la copia que se hizo antes
- * de empezar a pisar.
- *
- * Esta funcion existe para que el bucle de abajo se lea; el compilador la
- * mete en linea con -O2 (comprobado en el desensamblado: no queda ni una
- * llamada).
- */
-static inline float toma(const float *x, const float *hist,
-                         const float *ini, int32_t n)
-{
-    if (n < 0)                        { return hist[SEMIBANDA_HIST + n]; }
-    if (n < (int32_t)SEMIBANDA_HIST)  { return ini[n]; }
-    return x[n];
-}
-
-/*
  * ======================================================================
  * DOS BUCLES Y NO UNO, Y ESTE ES EL MOTIVO - 24/10/2026
  * ======================================================================
@@ -79,8 +61,9 @@ static inline float toma(const float *x, const float *hist,
  * Asi que el trabajo se parte en dos:
  *
  *   LAS PRIMERAS 34 SALIDAS miran hacia atras -a la cola del bloque
- *   anterior o a la copia de las primeras muestras- y siguen con
- *   toma(). Son treinta y cuatro de doscientas cincuenta y seis.
+ *   anterior o a la copia de las primeras muestras-. Son treinta y cuatro
+ *   de doscientas cincuenta y seis (since 14/11/2026 read from one
+ *   contiguous copy, see un_rail()).
  *
  *   LAS DEMAS, de la 34 en adelante, NO MIRAN HACIA ATRAS NUNCA: el
  *   indice mas bajo que leen es 2m-34, y con m >= 34 eso es >= m, o sea
@@ -88,25 +71,39 @@ static inline float toma(const float *x, const float *hist,
  *   salto: una ventana de 35 flotantes seguidos y nueve multiplicaciones
  *   con la simetria aprovechada. Eso es el 87 % de las salidas.
  */
+/*
+ * THE FIRST 34 WITHOUT toma() EITHER - 14/11/2026.
+ *
+ * Even for 34 outputs of 256, the per-access test was expensive: profiled on the radio at 192 kHz, toma() alone
+ * was 2.7 % of the CPU, more than a quarter of what the whole half-band costs. So the inputs those outputs read
+ * -the 34 of the previous block's tail, then the first 67 of this block, before any is overwritten- are copied
+ * once into one contiguous window v, where input n sits at v[SEMIBANDA_HIST + n]. The sums are written in the same
+ * order as before, so the outputs are the same to the bit; v also serves the tail below, in place of `ini`.
+ */
+#define SEMIB_VENTANA (3U * SEMIBANDA_HIST - 1U)   /* inputs -34 .. 66 */
+
 static void un_rail(float *x, float *hist, uint32_t n_sal)
 {
-    float ini[SEMIBANDA_HIST];
+    float v[SEMIB_VENTANA];
     uint32_t m;
 
-    /* Lo que el bucle va a pisar antes de haberlo leido. Ver la cabecera. */
-    memcpy(ini, x, sizeof ini);
+    /* Lo que el bucle va a pisar antes de haberlo leido, y la cola del bloque anterior delante. Ver la cabecera. */
+    memcpy(v, hist, SEMIBANDA_HIST * sizeof v[0]);
+    {
+        uint32_t n_v = 2U * n_sal;
+
+        if (n_v > SEMIB_VENTANA - SEMIBANDA_HIST) { n_v = SEMIB_VENTANA - SEMIBANDA_HIST; }
+        memcpy(&v[SEMIBANDA_HIST], x, n_v * sizeof v[0]);
+    }
 
     /* --- las que miran hacia atras --- */
     for (m = 0U; m < SEMIBANDA_HIST && m < n_sal; m++) {
-        int32_t c = (int32_t)(2U * m);
-        float acc = H_CENTRO * toma(x, hist, ini, c - 17);
+        const float *q = &v[SEMIBANDA_HIST + 2U * m];   /* q[d] = entrada 2m + d */
+        float acc = H_CENTRO * q[-17];
         uint32_t j;
 
         for (j = 0U; j < 9U; j++) {
-            int32_t a = c - (int32_t)(2U * j);          /* toma 2j     */
-            int32_t b = c - (int32_t)(34U - 2U * j);    /* toma 34-2j  */
-
-            acc += k_h[j] * (toma(x, hist, ini, a) + toma(x, hist, ini, b));
+            acc += k_h[j] * (q[-(int32_t)(2U * j)] + q[-(int32_t)(34U - 2U * j)]);   /* tomas 2j y 34-2j */
         }
         x[m] = acc;
     }
@@ -142,7 +139,7 @@ static void un_rail(float *x, float *hist, uint32_t n_sal)
 
     /* Y la cola para el bloque siguiente: las 34 ultimas de la ENTRADA,
      * no de la salida. Se cogen de donde todavia estan sin pisar -los
-     * indices altos- o de `ini` si el bloque fuera tan corto que la
+     * indices altos- o de la ventana `v` si el bloque fuera tan corto que la
      * salida hubiera llegado hasta ahi. */
     {
         uint32_t n_ent = 2U * n_sal;
@@ -151,7 +148,7 @@ static void un_rail(float *x, float *hist, uint32_t n_sal)
         for (k = 0U; k < SEMIBANDA_HIST; k++) {
             int32_t n = (int32_t)(n_ent - SEMIBANDA_HIST + k);
 
-            hist[k] = (n < (int32_t)n_sal) ? ini[n] : x[n];
+            hist[k] = (n < (int32_t)n_sal) ? v[(int32_t)SEMIBANDA_HIST + n] : x[n];
         }
     }
 }
