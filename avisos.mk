@@ -234,6 +234,12 @@ CALIENTES = demod_am.o nr_ss.o anotch.o audiofil.o sam.o disc_fm.o nco.o \
             arm_biquad_cascade_df1_f32.o arm_cmplx_mag_f32.o arm_fir_f32.o \
             arm_fir_decimate_f32.o arm_fir_interpolate_f32.o \
             arm_rfft_fast_f32.o arm_cfft_f32.o arm_cfft_radix8_f32.o arm_bitreversal2.o
+# iqbal.c (14/11/2026), APM32 build only: its mirror FIR runs in the DMA interrupt on every raw sample and, once
+# enabled, took 10 % of the CPU at 192 kHz. -O2 gives bit-identical samples (checked on the QEMU Cortex-M4F rig,
+# 9,000 blocks over its three paths) for 200 more bytes, which the GD32's flash is kept from.
+ifneq (,$(findstring CHIP_APM32F407,$(DEFS_EXTRA)))
+CALIENTES += iqbal.o
+endif
 
 
 # ---------------------------------------------------------------------
