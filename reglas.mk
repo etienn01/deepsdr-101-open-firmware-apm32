@@ -174,6 +174,18 @@ C_SOURCES  += CMSIS/DSP/Source/FilteringFunctions/arm_fir_decimate_f32.c
 C_SOURCES  += CMSIS/DSP/Source/FilteringFunctions/arm_fir_decimate_init_f32.c
 C_SOURCES  += CMSIS/DSP/Source/FilteringFunctions/arm_fir_interpolate_f32.c
 C_SOURCES  += CMSIS/DSP/Source/FilteringFunctions/arm_fir_interpolate_init_f32.c
+# arm_rfft_fast_f32 and what it needs (14/11/2026): the 128-point real FFT of the APM32 build's noise reduction
+# (nr_ss.c, NR_RFFT). From CMSIS-DSP v1.17.1, the release the rest of CMSIS/DSP matches (these eight files are the
+# same in v1.18.0). The GD32 build does not call them and --gc-sections drops them, tables included, so its flash
+# does not change.
+C_SOURCES  += CMSIS/DSP/Source/TransformFunctions/arm_rfft_fast_f32.c
+C_SOURCES  += CMSIS/DSP/Source/TransformFunctions/arm_rfft_fast_init_f32.c
+C_SOURCES  += CMSIS/DSP/Source/TransformFunctions/arm_cfft_f32.c
+C_SOURCES  += CMSIS/DSP/Source/TransformFunctions/arm_cfft_init_f32.c
+C_SOURCES  += CMSIS/DSP/Source/TransformFunctions/arm_cfft_radix8_f32.c
+C_SOURCES  += CMSIS/DSP/Source/TransformFunctions/arm_bitreversal2.c
+C_SOURCES  += CMSIS/DSP/Source/CommonTables/arm_common_tables.c
+C_SOURCES  += CMSIS/DSP/Source/CommonTables/arm_const_structs.c
 
 ASM_SOURCES = CMSIS/GD/GD32F4xx/Source/GCC/startup_gd32f450_470.S
 

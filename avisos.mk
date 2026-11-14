@@ -232,7 +232,8 @@ CALIENTES = demod_am.o nr_ss.o anotch.o audiofil.o sam.o disc_fm.o nco.o \
             fft.o waterfall.o gd32_i2s.o sdr_rx.o \
             nb.o \
             arm_biquad_cascade_df1_f32.o arm_cmplx_mag_f32.o arm_fir_f32.o \
-            arm_fir_decimate_f32.o arm_fir_interpolate_f32.o
+            arm_fir_decimate_f32.o arm_fir_interpolate_f32.o \
+            arm_rfft_fast_f32.o arm_cfft_f32.o arm_cfft_radix8_f32.o arm_bitreversal2.o
 
 
 # ---------------------------------------------------------------------

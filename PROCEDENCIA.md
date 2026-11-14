@@ -96,6 +96,13 @@ La biblioteca de periféricos estándar de GigaDevice para el GD32F4xx y el CMSI
 de ARM, con sus propias licencias. Se usan tal cual y están fuera de los
 barridos de estilo del proyecto a propósito.
 
+*Added 14/11/2026:* `CMSIS/DSP/` matches CMSIS-DSP **v1.17.1**
+(github.com/ARM-software/CMSIS-DSP, Apache-2.0): 61 of its 64 files are identical to that release. The eight
+files of the real FFT used by the APM32 build's noise reduction were copied unchanged from the same release:
+`Source/TransformFunctions/arm_rfft_fast_f32.c`, `arm_rfft_fast_init_f32.c`, `arm_cfft_f32.c`,
+`arm_cfft_init_f32.c`, `arm_cfft_radix8_f32.c`, `arm_bitreversal2.c` and `Source/CommonTables/arm_common_tables.c`,
+`arm_const_structs.c` (identical in v1.18.0).
+
 ---
 
 ### `User/rm68120_exmc.c` — la secuencia del panel, de Espressif (Apache-2.0)

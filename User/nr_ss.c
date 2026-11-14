@@ -172,6 +172,42 @@ static float s_twiddle_sin[NR_SS_NSTFFT / 2U] TCMRAM_BSS;
 static uint16_t s_bitrev[NR_SS_NSTFFT] TCMRAM_BSS;
 #endif
 static uint32_t s_pt_w;   /* ring buffer write pointer into s_sigt */
+
+/*
+ * THE REAL FFT, APM32 BUILD - 14/11/2026.
+ *
+ * The frame is real, but the port kept the original's complex 128-point FFT with the imaginary part zeroed, through
+ * nr_fft_transform()'s plain radix-2: measured on the radio at 192 kHz, the two transforms cost about 37,000 cycles
+ * a block, two thirds of the noise reduction, which itself was 11 % of the CPU and what pulled the display below
+ * its frame rate. CMSIS-DSP's arm_rfft_fast_f32() does the same 128-point transform of a real frame for a fraction
+ * of that. The spectrum comes packed (X0 and X64 real, then X1..X63), so NR_BIN() reads bins 65..127 as the
+ * conjugates of 63..1 they are, and the gains go on through the mean of each bin and its mirror (see the inverse
+ * below). Not bit-exact with the complex path, which rounds differently: the difference was measured on the host
+ * before this went in. The GD32 build keeps nr_fft_transform(): its flash cannot take the CMSIS code and tables.
+ */
+#ifdef CHIP_APM32F407
+#define NR_RFFT 1
+#else
+#define NR_RFFT 0
+#endif
+#if NR_RFFT
+#include "arm_math.h"
+static arm_rfft_fast_instance_f32 s_rfft;
+/* |re| and |im| of bin j (0..127) from the packed spectrum in the second half of s_dat_stfft. */
+static inline void nr_bin(uint32_t j, float *ar, float *ai)
+{
+    const float *p = &s_dat_stfft[NR_SS_NSTFFT];
+    uint32_t     k = (j <= NR_SS_NSTFFT / 2U) ? j : (NR_SS_NSTFFT - j);
+
+    if (k == 0U)                     { *ar = fabsf(p[0]); *ai = 0.0f; }
+    else if (k == NR_SS_NSTFFT / 2U) { *ar = fabsf(p[1]); *ai = 0.0f; }
+    else                             { *ar = fabsf(p[2U * k]); *ai = fabsf(p[2U * k + 1U]); }
+}
+#define NR_BIN(j, ar, ai) nr_bin((j), &(ar), &(ai))
+#else
+#define NR_BIN(j, ar, ai) \
+    do { (ar) = fabsf(s_dat_stfft[2U * (j)]); (ai) = fabsf(s_dat_stfft[2U * (j) + 1U]); } while (0)
+#endif
 /*
  * LA GANANCIA DE CADA BIN, SUAVIZADA EN EL TIEMPO - 07/10/2026.
  *
@@ -492,6 +528,7 @@ static float cosf_approx_local(float x)
  * reverse direction), same approach the original ESP-DSP-based code
  * used (negate imaginary before and after dsps_fft2r_fc32()).
  */
+#if !NR_RFFT
 static void nr_fft_transform(float *re_im, int inverse)
 {
     uint32_t n;
@@ -558,6 +595,7 @@ static void nr_fft_transform(float *re_im, int inverse)
         for (n = 0; n < NR_SS_NSTFFT; n++) { re_im[2U * n + 1U] = -re_im[2U * n + 1U]; }
     }
 }
+#endif /* !NR_RFFT */
 
 void nr_ss_init(void)
 {
@@ -592,6 +630,9 @@ void nr_ss_init(void)
         float t = (float)n / (float)NR_SS_NSTFFT;
         s_win[n] = 0.5f - 0.5f * cosf_approx_local(2.0f * 3.14159265358979f * t);
     }
+#endif
+#if NR_RFFT
+    (void)arm_rfft_fast_init_128_f32(&s_rfft);
 #endif
 
     memset(s_sigt, 0, sizeof(s_sigt));
@@ -742,6 +783,16 @@ void nr_ss_process(float *audio, uint32_t n)
      * starting right after where step 1 left the write pointer - same
      * read-then-advance walk the original used) into the complex FFT
      * buffer, imaginary part zeroed (real input). */
+#if NR_RFFT
+    /* APM32: the real frame in the first half, its packed spectrum in the second (see NR_RFFT). */
+    for (i = 0; i < NR_SS_NSTFFT; i++) {
+        s_dat_stfft[i] = s_sigt[s_pt_w] * s_win[i];
+        s_pt_w++;
+        if (s_pt_w == NR_SS_NSTFFT) { s_pt_w = 0U; }
+    }
+
+    arm_rfft_fast_f32(&s_rfft, s_dat_stfft, &s_dat_stfft[NR_SS_NSTFFT], 0U);
+#else
     for (i = 0; i < NR_SS_NSTFFT; i++) {
         s_dat_stfft[2U * i]      = s_sigt[s_pt_w] * s_win[i];
         s_dat_stfft[2U * i + 1U] = 0.0f;
@@ -750,6 +801,7 @@ void nr_ss_process(float *audio, uint32_t n)
     }
 
     nr_fft_transform(s_dat_stfft, 0);
+#endif
 
     /* 3. Spectral subtraction. amp uses the same alpha-max-beta-min
      * style weighted sum of |re|/|im| as the original (and this
@@ -768,9 +820,9 @@ void nr_ss_process(float *audio, uint32_t n)
         float mn = 1.0e30f;
         for (b = 0U; b < NR_GRUPO; b++) {
             uint32_t j = i * NR_GRUPO + b;
-            float ar = fabsf(s_dat_stfft[2U * j]);
-            float ai = fabsf(s_dat_stfft[2U * j + 1U]);
-            float a  = (ar > ai) ? (0.96043457f * ar + 0.39782422f * ai)
+            float ar, ai, a;
+            NR_BIN(j, ar, ai);
+            a  = (ar > ai) ? (0.96043457f * ar + 0.39782422f * ai)
                                  : (0.96043457f * ai + 0.39782422f * ar);
             if (a < mn) { mn = a; }
         }
@@ -778,12 +830,12 @@ void nr_ss_process(float *audio, uint32_t n)
     }
 
     for (i = 0; i < NR_SS_NSTFFT; i++) {
-        float xr = fabsf(s_dat_stfft[2U * i]);
-        float xi = fabsf(s_dat_stfft[2U * i + 1U]);
+        float xr, xi;
         float amp;
         float g;
 
-        amp = (xr > xi) ? (0.96043457f * xr + 0.39782422f * xi)
+        NR_BIN(i, xr, xi);
+        amp =(xr > xi) ? (0.96043457f * xr + 0.39782422f * xi)
                          : (0.96043457f * xi + 0.39782422f * xr);
         amp *= (1.0f / (float)NR_SS_NSTFFT);
 
@@ -840,11 +892,33 @@ void nr_ss_process(float *audio, uint32_t n)
          * pitido suelto. Ver el comentario de NR_SS_SUBE/BAJA. */
         if (g > s_g[i]) { s_g[i] += NR_SS_SUBE * (g - s_g[i]); }
         else            { s_g[i] += NR_SS_BAJA * (g - s_g[i]); }
+#if !NR_RFFT
         g = s_g[i];
         s_dat_stfft[2U * i]      *= g;
         s_dat_stfft[2U * i + 1U] *= g;
+#endif
     }
 
+#if NR_RFFT
+    /* The gains on the packed spectrum. Bin k and bin 128 - k carry conjugate values but can get different gains
+     * (their groups' minima differ); the complex inverse FFT kept only the real part of the result, which is what
+     * applying their mean to both gives. Then the inverse, which already scales by 1/N: the new frame lands in the
+     * first NR_SS_NSTFFT floats, as below. */
+    {
+        float   *p = &s_dat_stfft[NR_SS_NSTFFT];
+        uint32_t k;
+
+        p[0] *= s_g[0];
+        p[1] *= s_g[NR_SS_NSTFFT / 2U];
+        for (k = 1U; k < NR_SS_NSTFFT / 2U; k++) {
+            float ge = 0.5f * (s_g[k] + s_g[NR_SS_NSTFFT - k]);
+
+            p[2U * k]      *= ge;
+            p[2U * k + 1U] *= ge;
+        }
+        arm_rfft_fast_f32(&s_rfft, p, s_dat_stfft, 1U);
+    }
+#else
     nr_fft_transform(s_dat_stfft, 1);
 
     /* The new frame: real part scaled by 1/N, packed into the first
@@ -855,6 +929,7 @@ void nr_ss_process(float *audio, uint32_t n)
     for (i = 0; i < NR_SS_NSTFFT; i++) {
         s_dat_stfft[i] = s_dat_stfft[2U * i] * (1.0f / (float)NR_SS_NSTFFT);
     }
+#endif
 
     /* 4. Overlap-add (same frame alignment as the original's #if Nframe==4
      * branch): this block is the partial sum of the three older frames plus
