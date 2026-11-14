@@ -3978,6 +3978,8 @@ static const uint16_t SPEC_H       = 240;             /* was 280 - see this bloc
  * se consigue que el eje mienta. */
 static const uint16_t SPEC_TRACE_X = SPC_TRACE_X;     /* = 40, tras la canaleta */
 static const uint16_t SPEC_TRACE_W = SPC_TRACE_W;     /* = WATERFALL_WIDTH; /4 exacto para el marcador de Fs/4 */
+/* spectrum_draw() draws nothing on a panel taller than SPECTRUM_MAX_H, which is sized to this one. */
+_Static_assert(SPC_TRACE_H <= SPECTRUM_MAX_H, "the spectrum panel is taller than SPECTRUM_MAX_H (spectrum.h)");
 static const uint16_t WF_PANEL_Y   = 104 + 240 + 2;   /* = 346, same value as before (see header comment) */
 static const uint16_t WF_Y         = 104 + 240 + 4;   /* first waterfall row - same value as before */
 

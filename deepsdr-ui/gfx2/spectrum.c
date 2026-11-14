@@ -714,8 +714,10 @@ uint16_t spectrum_colormap(float db, float db_min, float db_max)
 /* --- spectrum rendering --------------------------------------------- */
 
 #define SPEC_MAX_W 800
-#define SPEC_MAX_H 280 /* raised from 160 (30/07/2026) for the redesigned UI's
-                          taller spectrum panel - per-row arrays only, cheap */
+/* The tallest panel drawn, SPECTRUM_MAX_H (see spectrum.h). Each row costs 3 bytes of TCM (s_row_color,
+ * s_row_grid), and it must fit in the uint8_t bar heights. */
+#define SPEC_MAX_H SPECTRUM_MAX_H
+typedef char spec_max_h_fits_uint8[(SPEC_MAX_H <= 255U) ? 1 : -1];
 
 /* Extra colors not taken from the palette. */
 #define SPEC_COLOR_TRACE  GFX_COLOR_WHITE
@@ -873,7 +875,7 @@ static uint16_t s_plant_rej[SPEC_MAX_W];
 #if SPECTRUM_PEAK_HOLD
 static float    s_col_peak[SPEC_MAX_W] TCMRAM_BSS;  /* peak-hold dB per column     */
 #endif
-static uint16_t s_bar_h[SPEC_MAX_W] TCMRAM_BSS;     /* bar height, px from bottom  */
+static uint8_t  s_bar_h[SPEC_MAX_W] TCMRAM_BSS;     /* bar height, px from bottom (0..h, h <= SPEC_MAX_H <= 255) */
 /*
  * Y ESTE SOLO EXISTE SI HAY PICO QUE SOSTENER - 24/10/2026.
  *
@@ -1668,7 +1670,7 @@ void spectrum_draw(const float *db, uint32_t n_bins,
         t = (s_col_ema[col] - db_min) * scale_t;
         if (t < 0.0f) { t = 0.0f; }
         if (t > 1.0f) { t = 1.0f; }
-        s_bar_h[col] = (uint16_t)(t * (float)h);
+        s_bar_h[col] = (uint8_t)(t * (float)h);
     }
 
     /*
@@ -1693,7 +1695,7 @@ void spectrum_draw(const float *db, uint32_t n_bins,
             uint32_t izq = s_bar_h[0];
             for (col = 1; col < w - 1U; col++) {
                 uint32_t cur = s_bar_h[col];
-                s_bar_h[col] = (uint16_t)((izq + 2U * cur + (uint32_t)s_bar_h[col + 1U]) / 4U);
+                s_bar_h[col] = (uint8_t)((izq + 2U * cur + (uint32_t)s_bar_h[col + 1U]) / 4U);
                 izq = cur;
             }
         }

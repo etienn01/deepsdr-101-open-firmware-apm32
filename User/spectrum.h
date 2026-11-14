@@ -445,6 +445,14 @@ int16_t spectrum_rejilla_fila(int16_t desde);
  */
 uint32_t spectrum_fondo_rgb(void);
 
+/*
+ * The tallest panel spectrum_draw() accepts: with a larger h it draws nothing. It is exactly the tallest panel the
+ * firmware draws, the main spectrum's SPC_TRACE_H (208; the digital modes' scope is 142), with no margin, because
+ * every row costs 3 bytes of TCM; and it cannot go past 255, the bar heights are 8-bit. main.c checks SPC_TRACE_H
+ * against it at build time: a taller panel has to raise this number.
+ */
+#define SPECTRUM_MAX_H 208U
+
 void spectrum_draw(const float *db, uint32_t n_bins,
                     uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                     float db_min, float db_max,

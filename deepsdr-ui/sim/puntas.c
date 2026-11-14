@@ -31,7 +31,7 @@ const palette_t *g_pal = &k_pal_oscura;
 #define PX   0
 #define PY   104
 #define PW   800
-#define PH   260
+#define PH   208   /* the radio's panel (SPC_TRACE_H); it was 260, taller than spectrum_draw() now accepts (SPECTRUM_MAX_H) */
 
 static float g_db[BINS];
 static const float DB_MIN = -110.0f;
