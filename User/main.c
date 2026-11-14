@@ -39237,6 +39237,22 @@ static float wf_color_top(float floor_db, float db_max)
 #define WF_COLOR_TOP s_db_max
 #endif
 
+/*
+ * The bin of an UNSHIFTED per-frame array that lands on display bin `bin` once the tuning-offset shift `giro` is
+ * applied: the same shift, with the same repeated edge bin, that sdr_spectrum_waterfall_tick() applies to
+ * s_db_frame[] ("Y AQUI SE GIRA EL CUADRO"). For the "Muy rapida" rows, which are built from the half-frame sums.
+ * Not inlined: in both row loops it cost 48 more bytes of flash, which the GD32 build is short of.
+ */
+__attribute__((noinline))
+static uint32_t wf_giro(uint32_t bin, int32_t giro, uint32_t n)
+{
+    int32_t s = (int32_t)bin + giro;
+
+    if (s < 0) { s = 0; }
+    if (s > (int32_t)n - 1) { s = (int32_t)n - 1; }
+    return (uint32_t)s;
+}
+
 __attribute__((noinline))
 static void sdr_spectrum_waterfall_tick(void)
 {
@@ -39751,12 +39767,15 @@ static void sdr_spectrum_waterfall_tick(void)
      * pegaria el borde de arriba de la ventana al de abajo. Son cuatro
      * columnas de 756, en el borde, y repetir no inventa una señal.
      */
+    /* Kept for the waterfall: the "Muy rapida" rows are built from the
+     * unshifted half-frame sums and need the same shift (see wf_giro()). */
+    int32_t giro = 0;
+
     if (s_spec_zoom == SPEC_ZOOM_1X
         && s_lo_pedido_hz != 0UL && s_lo_hz != 0UL
         && s_lo_pedido_hz != s_lo_hz) {
         int32_t  err_hz = (int32_t)((int64_t)s_lo_pedido_hz - (int64_t)s_lo_hz);
         uint32_t bin_hz = tasa_cruda_hz() / s_fft_bins;
-        int32_t  giro;
 
         if (bin_hz == 0UL) { bin_hz = 1UL; }
         /* Al bin mas cercano, con el redondeo hecho en los dos sentidos. */
@@ -40289,10 +40308,13 @@ static void sdr_spectrum_waterfall_tick(void)
             float esc = spectrum_colormap_escala(WF_COLOR_FLOOR, WF_COLOR_TOP);
 
             /* Primera mitad del frame -o el frame entero, si no hay dos
-             * medidas que repartir. */
+             * medidas que repartir. The halves come from the unshifted sums,
+             * so they take the tuning-offset shift that s_db_frame already
+             * has (wf_giro()): without it this speed drew the waterfall off
+             * the spectrum by `giro` bins whenever the LO missed the dial. */
             for (x = 0; x < WATERFALL_WIDTH; x++) {
                 uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
-                line[x] = spectrum_colormap_idx(parte ? (s_wf_buf.mitad[bin] * inv_a)
+                line[x] = spectrum_colormap_idx(parte ? (s_wf_buf.mitad[wf_giro(bin, giro, nbins)] * inv_a)
                                                       : s_db_frame[bin],
                                                 WF_COLOR_FLOOR, esc);
             }
@@ -40302,7 +40324,7 @@ static void sdr_spectrum_waterfall_tick(void)
              * reparto no hay "despues": se empuja otra vez el mismo. */
             if (parte) {
                 for (x = 0; x < WATERFALL_WIDTH; x++) {
-                    uint32_t bin = ((uint32_t)x * nbins) / WATERFALL_WIDTH;
+                    uint32_t bin = wf_giro(((uint32_t)x * nbins) / WATERFALL_WIDTH, giro, nbins);
                     line[x] = spectrum_colormap_idx(
                                   (s_db_sum[bin] - s_wf_buf.mitad[bin]) * inv_b,
                                   WF_COLOR_FLOOR, esc);
