@@ -892,7 +892,13 @@ static uint16_t s_peak_h[SPEC_MAX_W] TCMRAM_BSS;    /* peak marker height       
 static uint8_t  s_bridge = 1U;   /* ver spectrum_set_bridge() */
 static uint16_t s_row_color[SPEC_MAX_H] TCMRAM_BSS; /* gradient fill color per row */
 static uint8_t  s_row_grid[SPEC_MAX_H] TCMRAM_BSS;  /* 1 = horizontal gridline on this row */
-static uint8_t  s_col_grid[SPEC_MAX_W] TCMRAM_BSS;  /* 1 = vertical gridline on this column - added 08/09/2026, see SPECTRUM_GRID_ROWS/COLS's comment in spectrum.h */
+static uint8_t  s_col_grid[(SPEC_MAX_W + 7U) / 8U] TCMRAM_BSS; /* bit `col` = vertical gridline on this column - added 08/09/2026, see SPECTRUM_GRID_ROWS/COLS's comment in spectrum.h. One bit per column, not one byte: col_rejilla() */
+
+/* 1 if column `col` carries a vertical gridline (bit col & 7 of byte col / 8 of s_col_grid). */
+static inline uint8_t col_rejilla(uint16_t col)
+{
+    return (uint8_t)((s_col_grid[col >> 3] >> (col & 7U)) & 1U);
+}
 /* Aqui vivia s_row_buf[SPEC_MAX_W]: la fila de trabajo de cuando el espectro
  * se montaba y se volcaba fila a fila. Ya no hace falta - se monta por bandas
  * sobre la banda de gfx2- y sus 1.600 bytes vuelven al TCM, que es donde vive
@@ -1401,7 +1407,7 @@ static void compon(uint16_t *dst, uint32_t stride, uint16_t row, uint16_t nf,
                 if (lo2 > hi2) { break; }
                 for (col = lo2; col <= hi2; col++) {
                     dst[(uint32_t)k * stride + (col - c0)] =
-                        (rej || s_col_grid[col]) ? s_ult.grid_color
+                        (rej || col_rejilla(col)) ? s_ult.grid_color
                                                  : s_ult.bg_color;
                 }
             }
@@ -1784,15 +1790,17 @@ void spectrum_draw(const float *db, uint32_t n_bins,
         }
     }
 #endif
-    for (col = 0; col < w; col++) {
-        s_col_grid[col] = 0U;
-    }
+    /* Columns 0..w-1 cleared, in whole bytes: the byte loop cleared exactly those, this also clears up to seven
+     * columns past w in the last byte. Nothing reads a column past w before the next frame sets it, except
+     * spectrum_pinta_en() after an aborted narrower frame, which the firmware never reaches (see traza_puente()).
+     * Clearing only those bits was 68 bytes more of flash. */
+    memset(s_col_grid, 0, (size_t)((w + 7U) >> 3));
 #if SPECTRUM_GRID_COLS > 0
     {
         uint8_t gi;
         for (gi = 1U; gi <= SPECTRUM_GRID_COLS; gi++) {
             uint16_t col_pos = (uint16_t)(((uint32_t)w * gi) / (SPECTRUM_GRID_COLS + 1U));
-            if (col_pos < w) { s_col_grid[col_pos] = 1U; }
+            if (col_pos < w) { s_col_grid[col_pos >> 3] |= (uint8_t)(1U << (col_pos & 7U)); }
         }
     }
 #endif
@@ -1863,7 +1871,7 @@ void spectrum_draw(const float *db, uint32_t n_bins,
          * la barra y se repasan luego, fila a fila.
          */
         for (col = 0; col < w; col++) {
-            uint16_t liso = s_col_grid[col] ? grid_color : bg_color;
+            uint16_t liso = col_rejilla(col) ? grid_color : bg_color;
             uint16_t rej  = grid_color;
 
             if (band_active && (col >= band_col_lo) && (col <= band_col_hi)) {
