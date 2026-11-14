@@ -38460,16 +38460,18 @@ static void debug_print_dec_signed(const char *label, int32_t val)
  * See spec_zoom_t's comment (near the menu tile code, above) for the
  * overall design. This block holds the actual DSP: a generic
  * decimate-by-2 FIR, cascadable up to 3x, plus the accumulation state
- * that gathers enough decimated samples across multiple raw 192kHz
- * blocks to fill one FFT_SIZE window.
+ * that gathers enough decimated samples across multiple raw blocks to
+ * fill one FFT window. The zoom only runs at 48/96 kHz (zoom_cabe()),
+ * where a raw block is SDR_RX_BLOCK_SAMPLES = 256 samples.
  */
 
 /*
  * ZOOM_DECIM2_COEFFS: a single decimate-by-2 stage, reused identically
  * at every cascade level (1, 2, or 3 passes) since only the INPUT:
  * OUTPUT ratio matters, not the absolute sample rate - the same 31-tap
- * filter is correct whether it's decimating 192kHz->96kHz (stage 1),
- * 96kHz->48kHz (stage 2), or 48kHz->24kHz (stage 3). Designed offline
+ * filter is correct whether it's decimating 96kHz->48kHz (stage 1),
+ * 48kHz->24kHz (stage 2), or 24kHz->12kHz (stage 3) (half those rates
+ * with the 48 kHz setting). Designed offline
  * via scipy.signal.firwin (Hamming window, same general FIR-lowpass
  * approach as demod_am.c's DECIM_COEFFS, just far shorter - a single
  * x2 stage doesn't need anywhere near that much stopband rejection,
@@ -38532,9 +38534,20 @@ static const float32_t ZOOM_DECIM2_COEFFS[ZOOM_DECIM2_TAPS] = {
 
 /* Three cascaded stages, one CMSIS decimator instance per channel per
  * stage (6 total) - each stage's block size is half the previous
- * one's, so they can't share instances/state. Named by INPUT rate at
- * 192kHz: stage1 sees the raw 512-sample block, stage2 sees stage1's
- * 256-sample output, stage3 sees stage2's 128-sample output. */
+ * one's, so they can't share instances/state.
+ *
+ * The raw block goes through the cascade in ZOOM_CHUNK-sample pieces:
+ * stage1 sees 32 raw samples at a time, stage2 stage1's 16, stage3
+ * stage2's 8. The decimator states and the working buffers only have to
+ * hold one piece instead of a whole block (6.5 KB of TCM less), and the
+ * result is bit for bit the same: every output sample of a CMSIS FIR
+ * decimator is computed from the same input samples with the same taps
+ * in the same order however the input stream is cut (the cuts keep the
+ * decimation phase: they are even at every stage), and nco_mezcla()
+ * advances its phase per sample. */
+#define ZOOM_CHUNK 32U
+_Static_assert((SDR_RX_BLOCK_SAMPLES % ZOOM_CHUNK) == 0U && (ZOOM_CHUNK % 8U) == 0U,
+               "ZOOM_CHUNK must divide the raw block and stay even after three halvings");
 static arm_fir_decimate_instance_f32 s_zoom_dec1_i, s_zoom_dec1_q;
 static arm_fir_decimate_instance_f32 s_zoom_dec2_i, s_zoom_dec2_q;
 static arm_fir_decimate_instance_f32 s_zoom_dec3_i, s_zoom_dec3_q;
@@ -38546,24 +38559,26 @@ static arm_fir_decimate_instance_f32 s_zoom_dec3_i, s_zoom_dec3_q;
 #ifndef TCMRAM_BSS
 #define TCMRAM_BSS __attribute__((section(".tcmram")))
 #endif
-static float32_t s_zoom_dec1_i_state[ZOOM_DECIM2_TAPS + SDR_RX_BLOCK_SAMPLES - 1U] TCMRAM_BSS;
-static float32_t s_zoom_dec1_q_state[ZOOM_DECIM2_TAPS + SDR_RX_BLOCK_SAMPLES - 1U] TCMRAM_BSS;
-static float32_t s_zoom_dec2_i_state[ZOOM_DECIM2_TAPS + (SDR_RX_BLOCK_SAMPLES / 2U) - 1U] TCMRAM_BSS;
-static float32_t s_zoom_dec2_q_state[ZOOM_DECIM2_TAPS + (SDR_RX_BLOCK_SAMPLES / 2U) - 1U] TCMRAM_BSS;
-static float32_t s_zoom_dec3_i_state[ZOOM_DECIM2_TAPS + (SDR_RX_BLOCK_SAMPLES / 4U) - 1U] TCMRAM_BSS;
-static float32_t s_zoom_dec3_q_state[ZOOM_DECIM2_TAPS + (SDR_RX_BLOCK_SAMPLES / 4U) - 1U] TCMRAM_BSS;
+/* numTaps + blockSize - 1 floats each, blockSize being what each stage
+ * gets per call (arm_fir_decimate_init_f32() clears exactly that much). */
+static float32_t s_zoom_dec1_i_state[ZOOM_DECIM2_TAPS + ZOOM_CHUNK - 1U] TCMRAM_BSS;
+static float32_t s_zoom_dec1_q_state[ZOOM_DECIM2_TAPS + ZOOM_CHUNK - 1U] TCMRAM_BSS;
+static float32_t s_zoom_dec2_i_state[ZOOM_DECIM2_TAPS + (ZOOM_CHUNK / 2U) - 1U] TCMRAM_BSS;
+static float32_t s_zoom_dec2_q_state[ZOOM_DECIM2_TAPS + (ZOOM_CHUNK / 2U) - 1U] TCMRAM_BSS;
+static float32_t s_zoom_dec3_i_state[ZOOM_DECIM2_TAPS + (ZOOM_CHUNK / 4U) - 1U] TCMRAM_BSS;
+static float32_t s_zoom_dec3_q_state[ZOOM_DECIM2_TAPS + (ZOOM_CHUNK / 4U) - 1U] TCMRAM_BSS;
 
-/* Working buffers, one per stage boundary. s_zoom_f_i/q hold the raw
- * block cast to float and (if needed) re-centered on the tuned
- * frequency, BEFORE stage 1. */
-static float32_t s_zoom_f_i[SDR_RX_BLOCK_SAMPLES] TCMRAM_BSS;
-static float32_t s_zoom_f_q[SDR_RX_BLOCK_SAMPLES] TCMRAM_BSS;
-static float32_t s_zoom_s1_i[SDR_RX_BLOCK_SAMPLES / 2U] TCMRAM_BSS;
-static float32_t s_zoom_s1_q[SDR_RX_BLOCK_SAMPLES / 2U] TCMRAM_BSS;
-static float32_t s_zoom_s2_i[SDR_RX_BLOCK_SAMPLES / 4U] TCMRAM_BSS;
-static float32_t s_zoom_s2_q[SDR_RX_BLOCK_SAMPLES / 4U] TCMRAM_BSS;
-static float32_t s_zoom_s3_i[SDR_RX_BLOCK_SAMPLES / 8U] TCMRAM_BSS;
-static float32_t s_zoom_s3_q[SDR_RX_BLOCK_SAMPLES / 8U] TCMRAM_BSS;
+/* Working buffers, one per stage boundary, one ZOOM_CHUNK piece each.
+ * s_zoom_f_i/q hold the raw piece cast to float and (if needed)
+ * re-centered on the tuned frequency, BEFORE stage 1. */
+static float32_t s_zoom_f_i[ZOOM_CHUNK] TCMRAM_BSS;
+static float32_t s_zoom_f_q[ZOOM_CHUNK] TCMRAM_BSS;
+static float32_t s_zoom_s1_i[ZOOM_CHUNK / 2U] TCMRAM_BSS;
+static float32_t s_zoom_s1_q[ZOOM_CHUNK / 2U] TCMRAM_BSS;
+static float32_t s_zoom_s2_i[ZOOM_CHUNK / 4U] TCMRAM_BSS;
+static float32_t s_zoom_s2_q[ZOOM_CHUNK / 4U] TCMRAM_BSS;
+static float32_t s_zoom_s3_i[ZOOM_CHUNK / 8U] TCMRAM_BSS;
+static float32_t s_zoom_s3_q[ZOOM_CHUNK / 8U] TCMRAM_BSS;
 
 /* Accumulates decimated samples across as many raw blocks as it takes
  * to fill one FFT window (2/4/8 raw blocks for ZOOM_2X/4X/8X -
@@ -38588,32 +38603,32 @@ static void zoom_decimators_init(void)
     /* Same "check the return status, shout over UART if it ever
      * fails" discipline demod_am.c's own decimator init uses - see
      * its comment. blockSize % decimFactor == 0 is the actual
-     * constraint (512/256/128, decimating by 2 each time - always
+     * constraint (32/16/8, decimating by 2 each time - always
      * exact), so this isn't expected to ever trip, but a silently
      * unusable instance with no other symptom than a garbled zoomed
      * spectrum would be a nasty thing to debug blind. */
     if (arm_fir_decimate_init_f32(&s_zoom_dec1_i, ZOOM_DECIM2_TAPS, 2U, ZOOM_DECIM2_COEFFS,
-                                    s_zoom_dec1_i_state, SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                    s_zoom_dec1_i_state, ZOOM_CHUNK) != ARM_MATH_SUCCESS) {
         debug_print("zoom: *** decimator stage1 I init FAILED ***\n");
     }
     if (arm_fir_decimate_init_f32(&s_zoom_dec1_q, ZOOM_DECIM2_TAPS, 2U, ZOOM_DECIM2_COEFFS,
-                                    s_zoom_dec1_q_state, SDR_RX_BLOCK_SAMPLES) != ARM_MATH_SUCCESS) {
+                                    s_zoom_dec1_q_state, ZOOM_CHUNK) != ARM_MATH_SUCCESS) {
         debug_print("zoom: *** decimator stage1 Q init FAILED ***\n");
     }
     if (arm_fir_decimate_init_f32(&s_zoom_dec2_i, ZOOM_DECIM2_TAPS, 2U, ZOOM_DECIM2_COEFFS,
-                                    s_zoom_dec2_i_state, SDR_RX_BLOCK_SAMPLES / 2U) != ARM_MATH_SUCCESS) {
+                                    s_zoom_dec2_i_state, ZOOM_CHUNK / 2U) != ARM_MATH_SUCCESS) {
         debug_print("zoom: *** decimator stage2 I init FAILED ***\n");
     }
     if (arm_fir_decimate_init_f32(&s_zoom_dec2_q, ZOOM_DECIM2_TAPS, 2U, ZOOM_DECIM2_COEFFS,
-                                    s_zoom_dec2_q_state, SDR_RX_BLOCK_SAMPLES / 2U) != ARM_MATH_SUCCESS) {
+                                    s_zoom_dec2_q_state, ZOOM_CHUNK / 2U) != ARM_MATH_SUCCESS) {
         debug_print("zoom: *** decimator stage2 Q init FAILED ***\n");
     }
     if (arm_fir_decimate_init_f32(&s_zoom_dec3_i, ZOOM_DECIM2_TAPS, 2U, ZOOM_DECIM2_COEFFS,
-                                    s_zoom_dec3_i_state, SDR_RX_BLOCK_SAMPLES / 4U) != ARM_MATH_SUCCESS) {
+                                    s_zoom_dec3_i_state, ZOOM_CHUNK / 4U) != ARM_MATH_SUCCESS) {
         debug_print("zoom: *** decimator stage3 I init FAILED ***\n");
     }
     if (arm_fir_decimate_init_f32(&s_zoom_dec3_q, ZOOM_DECIM2_TAPS, 2U, ZOOM_DECIM2_COEFFS,
-                                    s_zoom_dec3_q_state, SDR_RX_BLOCK_SAMPLES / 4U) != ARM_MATH_SUCCESS) {
+                                    s_zoom_dec3_q_state, ZOOM_CHUNK / 4U) != ARM_MATH_SUCCESS) {
         debug_print("zoom: *** decimator stage3 Q init FAILED ***\n");
     }
     s_zoom_acc_count = 0U;
@@ -38622,10 +38637,13 @@ static void zoom_decimators_init(void)
 /*
  * Runs ONLY when s_spec_zoom != SPEC_ZOOM_1X (the caller checks first -
  * at 1X this whole pipeline is skipped, zero extra cost). Processes
- * ONE raw 192kHz block: casts to float, re-centers on the tuned
- * frequency if needed, runs however many cascaded x2 stages the
- * current zoom level calls for, and appends the result to the
- * accumulator. Returns 1 when the accumulator just became FULL (a
+ * ONE raw block (256 samples at 48/96 kHz), ZOOM_CHUNK samples at a
+ * time: casts to float, re-centers on the tuned frequency if needed,
+ * runs however many cascaded x2 stages the current zoom level calls
+ * for, and appends the result to the accumulator. Once the accumulator
+ * is full the rest of the block still goes through the decimators (their
+ * history must stay continuous) but its output is dropped, as it always
+ * was. Returns 1 when the accumulator just became FULL (a
  * fresh s_fft_bins window is ready in s_zoom_acc_i/q), 0 otherwise -
  * the caller only computes/draws a new frame on a 1.
  */
@@ -38640,15 +38658,12 @@ static float s_zoom_mix_fs_puesto = 0.0f;
 __attribute__((noinline))
 static uint8_t zoom_process_block(void)
 {
+    uint16_t c;
     uint16_t n;
     const float32_t *out_i;
     const float32_t *out_q;
     uint16_t out_len;
-
-    for (n = 0; n < SDR_RX_BLOCK_SAMPLES; n++) {
-        s_zoom_f_i[n] = (float32_t)s_rx_i[n];
-        s_zoom_f_q[n] = (float32_t)s_rx_q[n];
-    }
+    uint8_t mezcla = 0U;
 
     /* Re-center on the tuned frequency BEFORE decimating - otherwise
      * stage 1's anti-alias filter (centered on 0Hz) would attenuate
@@ -38672,40 +38687,50 @@ static uint8_t zoom_process_block(void)
             s_zoom_mix_fs_puesto = fs_zoom;
             nco_freq(&s_zoom_nco, s_zoom_mix_hz_puesto, fs_zoom);
         }
-        nco_mezcla(&s_zoom_nco, s_zoom_f_i, s_zoom_f_q, SDR_RX_BLOCK_SAMPLES);
-    }
-    arm_fir_decimate_f32(&s_zoom_dec1_i, s_zoom_f_i, s_zoom_s1_i, SDR_RX_BLOCK_SAMPLES);
-    arm_fir_decimate_f32(&s_zoom_dec1_q, s_zoom_f_q, s_zoom_s1_q, SDR_RX_BLOCK_SAMPLES);
-    out_i = s_zoom_s1_i;
-    out_q = s_zoom_s1_q;
-    out_len = SDR_RX_BLOCK_SAMPLES / 2U;
-
-    if (s_spec_zoom >= SPEC_ZOOM_4X) {
-        arm_fir_decimate_f32(&s_zoom_dec2_i, s_zoom_s1_i, s_zoom_s2_i, SDR_RX_BLOCK_SAMPLES / 2U);
-        arm_fir_decimate_f32(&s_zoom_dec2_q, s_zoom_s1_q, s_zoom_s2_q, SDR_RX_BLOCK_SAMPLES / 2U);
-        out_i = s_zoom_s2_i;
-        out_q = s_zoom_s2_q;
-        out_len = SDR_RX_BLOCK_SAMPLES / 4U;
-    }
-    if (s_spec_zoom >= SPEC_ZOOM_8X) {
-        arm_fir_decimate_f32(&s_zoom_dec3_i, s_zoom_s2_i, s_zoom_s3_i, SDR_RX_BLOCK_SAMPLES / 4U);
-        arm_fir_decimate_f32(&s_zoom_dec3_q, s_zoom_s2_q, s_zoom_s3_q, SDR_RX_BLOCK_SAMPLES / 4U);
-        out_i = s_zoom_s3_i;
-        out_q = s_zoom_s3_q;
-        out_len = SDR_RX_BLOCK_SAMPLES / 8U;
+        mezcla = 1U;
     }
 
-    for (n = 0; n < out_len && s_zoom_acc_count < s_fft_bins
-                && s_zoom_acc_count < ZOOM_ACC_LEN;
-         n++, s_zoom_acc_count++) {
-        float32_t vi = out_i[n];
-        float32_t vq = out_q[n];
-        if (vi > 32767.0f)  { vi = 32767.0f; }
-        if (vi < -32768.0f) { vi = -32768.0f; }
-        if (vq > 32767.0f)  { vq = 32767.0f; }
-        if (vq < -32768.0f) { vq = -32768.0f; }
-        s_zoom_acc_i[s_zoom_acc_count] = (int16_t)vi;
-        s_zoom_acc_q[s_zoom_acc_count] = (int16_t)vq;
+    for (c = 0; c < SDR_RX_BLOCK_SAMPLES; c += ZOOM_CHUNK) {
+        for (n = 0; n < ZOOM_CHUNK; n++) {
+            s_zoom_f_i[n] = (float32_t)s_rx_i[c + n];
+            s_zoom_f_q[n] = (float32_t)s_rx_q[c + n];
+        }
+        if (mezcla) {
+            nco_mezcla(&s_zoom_nco, s_zoom_f_i, s_zoom_f_q, ZOOM_CHUNK);
+        }
+        arm_fir_decimate_f32(&s_zoom_dec1_i, s_zoom_f_i, s_zoom_s1_i, ZOOM_CHUNK);
+        arm_fir_decimate_f32(&s_zoom_dec1_q, s_zoom_f_q, s_zoom_s1_q, ZOOM_CHUNK);
+        out_i = s_zoom_s1_i;
+        out_q = s_zoom_s1_q;
+        out_len = ZOOM_CHUNK / 2U;
+
+        if (s_spec_zoom >= SPEC_ZOOM_4X) {
+            arm_fir_decimate_f32(&s_zoom_dec2_i, s_zoom_s1_i, s_zoom_s2_i, ZOOM_CHUNK / 2U);
+            arm_fir_decimate_f32(&s_zoom_dec2_q, s_zoom_s1_q, s_zoom_s2_q, ZOOM_CHUNK / 2U);
+            out_i = s_zoom_s2_i;
+            out_q = s_zoom_s2_q;
+            out_len = ZOOM_CHUNK / 4U;
+        }
+        if (s_spec_zoom >= SPEC_ZOOM_8X) {
+            arm_fir_decimate_f32(&s_zoom_dec3_i, s_zoom_s2_i, s_zoom_s3_i, ZOOM_CHUNK / 4U);
+            arm_fir_decimate_f32(&s_zoom_dec3_q, s_zoom_s2_q, s_zoom_s3_q, ZOOM_CHUNK / 4U);
+            out_i = s_zoom_s3_i;
+            out_q = s_zoom_s3_q;
+            out_len = ZOOM_CHUNK / 8U;
+        }
+
+        for (n = 0; n < out_len && s_zoom_acc_count < s_fft_bins
+                    && s_zoom_acc_count < ZOOM_ACC_LEN;
+             n++, s_zoom_acc_count++) {
+            float32_t vi = out_i[n];
+            float32_t vq = out_q[n];
+            if (vi > 32767.0f)  { vi = 32767.0f; }
+            if (vi < -32768.0f) { vi = -32768.0f; }
+            if (vq > 32767.0f)  { vq = 32767.0f; }
+            if (vq < -32768.0f) { vq = -32768.0f; }
+            s_zoom_acc_i[s_zoom_acc_count] = (int16_t)vi;
+            s_zoom_acc_q[s_zoom_acc_count] = (int16_t)vq;
+        }
     }
 
     if (s_zoom_acc_count >= s_fft_bins) {
