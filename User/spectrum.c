@@ -874,7 +874,6 @@ static uint16_t s_plant_rej[SPEC_MAX_W];
 static float    s_col_peak[SPEC_MAX_W] TCMRAM_BSS;  /* peak-hold dB per column     */
 #endif
 static uint16_t s_bar_h[SPEC_MAX_W] TCMRAM_BSS;     /* bar height, px from bottom  */
-static uint16_t s_bar_h_smooth[SPEC_MAX_W] TCMRAM_BSS; /* scratch buf for spatial smoothing */
 /*
  * Y ESTE SOLO EXISTE SI HAY PICO QUE SOSTENER - 24/10/2026.
  *
@@ -1645,17 +1644,15 @@ void spectrum_draw(const float *db, uint32_t n_bins,
     if (w >= 3U) {
         uint8_t pass;
         for (pass = 0; pass < s_line_smooth_passes; pass++) {
-            s_bar_h_smooth[0] = s_bar_h[0];
+            /* In place, no scratch array: `izq` holds the left neighbour as it was BEFORE this pass, so every
+             * column still averages the unsmoothed values of both neighbours, exactly as with a separate output
+             * buffer. The two end columns are left untouched. */
+            uint32_t izq = s_bar_h[0];
             for (col = 1; col < w - 1U; col++) {
-                s_bar_h_smooth[col] = (uint16_t)(((uint32_t)s_bar_h[col - 1U] +
-                                                   2U * (uint32_t)s_bar_h[col] +
-                                                   (uint32_t)s_bar_h[col + 1U]) / 4U);
+                uint32_t cur = s_bar_h[col];
+                s_bar_h[col] = (uint16_t)((izq + 2U * cur + (uint32_t)s_bar_h[col + 1U]) / 4U);
+                izq = cur;
             }
-            s_bar_h_smooth[w - 1U] = s_bar_h[w - 1U];
-            /* De una sola vez: eran 756 copias de 16 bits por pasada y hay
-             * hasta tres pasadas por cuadro. Mismo resultado, y el memcpy
-             * de la biblioteca mueve palabras enteras. 24/10/2026. */
-            memcpy(s_bar_h, s_bar_h_smooth, (size_t)w * sizeof s_bar_h[0]);
         }
     }
 
