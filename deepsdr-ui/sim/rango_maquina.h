@@ -32,17 +32,24 @@ static void rng_scan_salta(void)
 {
     uint32_t paso = rng_paso_hz();
     uint32_t f    = s_tune_hz;
+    uint8_t  vuelta = 0U;
 
     s_scan_para_en = 0U;
-    if (f < s_rng_lo || f >= s_rng_hi) { f = s_rng_lo; }
+    if (f < s_rng_lo || f >= s_rng_hi) { f = s_rng_lo; vuelta = 1U; }
     else                               { f += paso; }
-    if (f > s_rng_hi) { f = s_rng_lo; }
+    if (f > s_rng_hi) { f = s_rng_lo; vuelta = 1U; }
 
     s_tune_hz = f;
     /* El modo NO se toca: dentro de un tramo es el que haya puesto el
      * usuario. Asi que esto es el camino corto -oscilador y numero de la
-     * cabecera- y no mem_recupera(), que ademas rehace filtro y paso. */
-    apply_lo_tune(s_tune_hz);
+     * cabecera- y no mem_recupera(), que ademas rehace filtro y paso.
+     * A step walks the dial like the knob, so the NCO keeps the whole window
+     * ahead; going back to the start is a jump (see s_sintonia_paseo). */
+    if (vuelta) {
+        apply_lo_tune(s_tune_hz);
+    } else {
+        apply_lo_tune_paseo(s_tune_hz);
+    }
     freq_display_draw();
     /* Sin cambio de modo la cadena no se rehace, y ademas el tramo corre
      * con sus propios tiempos: ver SCAN_RNG_ESPERA_MS. */

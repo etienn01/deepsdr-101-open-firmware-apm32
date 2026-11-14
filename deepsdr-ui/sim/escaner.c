@@ -162,6 +162,7 @@ demod_mode_t demod_am_get_mode(void)      { return s_modo; }
 void demod_am_set_nivel_medir(uint8_t on) { s_nivel_on = on; }
 
 static void apply_lo_tune(uint32_t hz)  { (void)hz; }
+static void apply_lo_tune_paseo(uint32_t hz) { (void)hz; }   /* apm32: a range step walks the NCO */
 static void freq_display_draw(void)     { }
 static void mem_boton_repinta(void)     { }
 static void mem_rejilla_repinta(void)   { }

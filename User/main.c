@@ -1841,7 +1841,8 @@ static void tasa_vigila(void)
  * through it, so a typed frequency, a band, a memory or a CAT command was taken for a step of the knob and landed
  * 84 kHz from the centre at 192 kHz (34 at 96), at the edge of the screen.
  *
- * Only the knob, a drag on the spectrum and the CW tone walk the dial; they say so with apply_lo_tune_paseo().
+ * Only the knob, a drag on the spectrum, the CW tone and the range scanner's steps walk the dial; they say so with
+ * apply_lo_tune_paseo().
  * Everything else is a jump: out of the window, it lands at the classic Fs/4 place, as at power-on. Inside the
  * window nothing changes either way: the oscillator stays and only the mark moves.
  */
@@ -23607,17 +23608,24 @@ static void rng_scan_salta(void)
 {
     uint32_t paso = rng_paso_hz();
     uint32_t f    = s_tune_hz;
+    uint8_t  vuelta = 0U;
 
     s_scan_para_en = 0U;
-    if (f < s_rng_lo || f >= s_rng_hi) { f = s_rng_lo; }
+    if (f < s_rng_lo || f >= s_rng_hi) { f = s_rng_lo; vuelta = 1U; }
     else                               { f += paso; }
-    if (f > s_rng_hi) { f = s_rng_lo; }
+    if (f > s_rng_hi) { f = s_rng_lo; vuelta = 1U; }
 
     s_tune_hz = f;
     /* El modo NO se toca: dentro de un tramo es el que haya puesto el
      * usuario. Asi que esto es el camino corto -oscilador y numero de la
-     * cabecera- y no mem_recupera(), que ademas rehace filtro y paso. */
-    apply_lo_tune(s_tune_hz);
+     * cabecera- y no mem_recupera(), que ademas rehace filtro y paso.
+     * A step walks the dial like the knob, so the NCO keeps the whole window
+     * ahead; going back to the start is a jump (see s_sintonia_paseo). */
+    if (vuelta) {
+        apply_lo_tune(s_tune_hz);
+    } else {
+        apply_lo_tune_paseo(s_tune_hz);
+    }
     freq_display_draw();
     /* Sin cambio de modo la cadena no se rehace, y ademas el tramo corre
      * con sus propios tiempos: ver SCAN_RNG_ESPERA_MS. */
