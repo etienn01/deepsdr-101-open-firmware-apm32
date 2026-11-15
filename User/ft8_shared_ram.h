@@ -114,9 +114,10 @@ typedef union
      * estan en hfdl_ram.h.
      */
 #ifndef CHIP_APM32F407
-    /* FT8 and HFDL are left out of the APM32 build (128 KB of RAM): the pool shrinks to the waterfall's size
-     * and the remaining borrowers (AIS, ALE, DSC, STANAG...) check the capacity they get at run time. */
+    /* HFDL is left out of the APM32 build (128 KB of RAM). The other borrowers (AIS, ALE, DSC, SSTV...) check
+     * the capacity they get at run time. */
     uint8_t hfdl_buf[HFDL_RAM_TOTAL];
+#endif
 
 
     struct
@@ -185,8 +186,12 @@ typedef union
          * Esos 8.192 bytes son lo primero que se junto para pagar el
          * submuestreo en frecuencia. Ver FT8_ADAPTER_FREQ_OSR.
          */
+#ifndef CHIP_APM32F407
+        /* APM32: not in here. The two halves live in fast RAM (TCM), see ft8_fft.c: the union is in main RAM,
+         * which is the scarcer of the two, and only the CPU touches them. */
         float fft_re[FT8_FFT_SIZE / 2U];
         float fft_im[FT8_FFT_SIZE / 2U];
+#endif
         /*
          * *** AQUI ESTABAN LAS CUATRO TABLAS, Y EL SELLO - 10/10/2026. ***
          *
@@ -256,7 +261,6 @@ typedef union
         uint8_t cands[1120];         /* candidate_list- ft8_decoder.c */
         char    lineas[48][88];      /* s_lin         - ft8_modo.c */
     } ft8;
-#endif
 } ft8_shared_ram_t;
 
 /*

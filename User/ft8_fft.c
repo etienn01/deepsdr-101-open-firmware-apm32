@@ -16,6 +16,13 @@ static float s_re_c[FT8_FFT_SIZE];
 static float s_im_c[FT8_FFT_SIZE];
 #define s_re           s_re_c
 #define s_im           s_im_c
+#elif defined(CHIP_APM32F407)
+/* APM32: out of the union, in fast RAM (TCM). The union is in main RAM, which FT8 would otherwise fill on this
+ * chip, and nothing but the CPU touches these. They are permanent (8,192 bytes) rather than borrowed. */
+static float s_re_t[FT8_FFT_SIZE / 2U] __attribute__((section(".tcmram")));
+static float s_im_t[FT8_FFT_SIZE / 2U] __attribute__((section(".tcmram")));
+#define s_re           s_re_t
+#define s_im           s_im_t
 #else
 #define s_re           (g_ft8_shared_ram.ft8.fft_re)
 #define s_im           (g_ft8_shared_ram.ft8.fft_im)

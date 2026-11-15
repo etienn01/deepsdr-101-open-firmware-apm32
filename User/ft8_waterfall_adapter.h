@@ -455,7 +455,9 @@
 #ifndef FT8_ADAPTER_NUM_BINS
 #define FT8_ADAPTER_NUM_BINS      512 /* 3.200 Hz: LA BANDA ENTERA - ver arriba */
 #endif
+#ifndef FT8_ADAPTER_MIN_RAW_BIN
 #define FT8_ADAPTER_MIN_RAW_BIN    0   /* first ft8_fft_compute_db() output bin included in the search window - 0 = start right at DC-adjacent content */
+#endif
 
 /*
  * LOS BINS CRUDOS QUE SE GUARDAN DE VERDAD - 28/10/2026.

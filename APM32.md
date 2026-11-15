@@ -106,7 +106,12 @@ Never copy `update4.bin`, or the upstream `update.bin`, to that disk.
 
 ## Missing modes
 
-The APM32 has 128 KB of main RAM instead of 192: **FT8, WSPR, HFDL, STANAG and the maps** are left out for now.
+The APM32 has 128 KB of main RAM instead of 192: **WSPR, HFDL, STANAG and the maps** are left out for now.
+
+FT8 is in, with a narrower search window: 200 to 2,800 Hz of audio instead of 0 to 3,200 (7.9 KB less, and
+nobody transmits below 200 Hz). The audio scope shows both edges of the window. Its FFT buffers sit in fast RAM
+(TCM) rather than in the zone it borrows from the waterfall.
+
 Everything else is the upstream firmware, documented in [README.md](README.md).
 
 ## S-meter and spectrum in dBm

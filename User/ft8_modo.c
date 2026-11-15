@@ -382,7 +382,12 @@ float ft8_modo_ventana_hz(void)
      * la ventana coge NUM_BINS bins "nativos" de FT8, cada uno de
      * RAW_BIN_STEP de esos. Ver ft8_waterfall_adapter.h. */
     return ((float)FT8_ADAPTER_SAMPLE_RATE_HZ / (float)FT8_ADAPTER_NFFT)
-           * (float)(FT8_ADAPTER_NUM_BINS * FT8_ADAPTER_RAW_BIN_STEP);
+           * (float)(FT8_ADAPTER_MIN_RAW_BIN + FT8_ADAPTER_NUM_BINS * FT8_ADAPTER_RAW_BIN_STEP);
+}
+
+float ft8_modo_ventana_ini_hz(void)
+{
+    return ((float)FT8_ADAPTER_SAMPLE_RATE_HZ / (float)FT8_ADAPTER_NFFT) * (float)FT8_ADAPTER_MIN_RAW_BIN;
 }
 
 void ft8_modo_borra(void)

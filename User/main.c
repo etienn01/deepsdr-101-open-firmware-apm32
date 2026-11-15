@@ -35742,6 +35742,11 @@ static uint8_t scope_rayas(float nyquist_hz, scope_raya_t r[2])
          * el decodificador. Ver el comentario largo de abajo. */
         a = (uint16_t)((ft8_modo_ventana_hz() / nyquist_hz) * (float)MAIN_W);
         if (a < MAIN_W) { r[n].x = a; r[n].color = PAL_ACCENT; n++; }
+#ifdef CHIP_APM32F407
+        /* APM32: the window starts at 200 Hz, not at 0, so its bottom edge gets a line too. */
+        a = (uint16_t)((ft8_modo_ventana_ini_hz() / nyquist_hz) * (float)MAIN_W);
+        if (a > 0U && a < MAIN_W) { r[n].x = a; r[n].color = PAL_ACCENT; n++; }
+#endif
     } else if (cw_get_enabled()) {
         a = (uint16_t)((cw_get_pitch_hz()  / nyquist_hz) * (float)MAIN_W);
         b = (uint16_t)((cw_get_detect_hz() / nyquist_hz) * (float)MAIN_W);

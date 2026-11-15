@@ -571,10 +571,12 @@ $(shell mkdir -p $(BUILD_DIR) && { printf '%s\n' '$(FLAGS_NOW)' | cmp -s - $(FLA
 # flash with: dfu-util -d 314b:0106 -a 0 -s 0x08020000:leave -D build_apm32/firmware_apm32.bin
 # The APM32 has 128 KB of main RAM instead of 192: the modes listed in APM32_EXCLUDE are left out for now
 # and replaced by the no-op entry points of User/apm32_stubs.c (only built in this configuration).
-APM32_EXCLUDE = $(wildcard User/ft8_*.c) $(filter-out User/hfdl_viterbi.c User/hfdl_ram.c,$(wildcard User/hfdl_*.c)) User/mapa_bin.c User/mapa_eti.c $(wildcard User/wspr_*.c) \
+APM32_EXCLUDE = $(filter-out User/hfdl_viterbi.c User/hfdl_ram.c,$(wildcard User/hfdl_*.c)) User/mapa_bin.c User/mapa_eti.c $(wildcard User/wspr_*.c) \
                 $(wildcard User/stanag_*.c) User/s4415.c
 # Waterfall rows stored one byte per FFT bin (512) instead of per pixel (756), and a smaller compositor band.
-APM32_RAM_DEFS = -DWATERFALL_STORE_WIDTH=512 -DGFX2_BAND_H=4
+# FT8 searches 200-2,800 Hz instead of 0-3,200 (416 bins from raw bin 64): 7.9 KB less, and nobody
+# transmits below 200 Hz. See ft8_waterfall_adapter.h.
+APM32_RAM_DEFS = -DWATERFALL_STORE_WIDTH=512 -DGFX2_BAND_H=4 -DFT8_ADAPTER_NUM_BINS=416 -DFT8_ADAPTER_MIN_RAW_BIN=64
 # System clock: 192 (default, overclocked: the chip is rated 168; what the tested unit has run since 11/11/2026)
 # or 144 (in spec), see system_gd32f4xx.c
 APM32_SYSCLK_MHZ ?= 192
@@ -584,5 +586,4 @@ apm32:
 	         LDSCRIPT=APM32F407VG_FLASH.ld \
 	         DEFS_EXTRA="-DCHIP_APM32F407 -DAPM32_SYSCLK_MHZ=$(APM32_SYSCLK_MHZ) $(APM32_RAM_DEFS)" \
 	         USER_EXCLUIR="User/mapa_datos.c $(APM32_EXCLUDE)" \
-	         NO_FT8LIB=1 \
 	         build_apm32/firmware_apm32.bin

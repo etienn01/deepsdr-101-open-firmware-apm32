@@ -261,7 +261,7 @@ endif
 # vpath, que es una directiva y se procesa segun se lee - por eso hay que
 # declararla aqui explicitamente.
 INCLUDES  += -IFt8Lib
-# NO_FT8LIB=1 leaves the library out (APM32 build, see the apm32 target in reglas.mk)
+# NO_FT8LIB=1 leaves the library out (the APM32 build did until FT8 came back to it, 15/11/2026)
 ifneq ($(NO_FT8LIB),1)
 C_SOURCES += $(wildcard Ft8Lib/ft8/*.c)
 vpath %.c Ft8Lib/ft8

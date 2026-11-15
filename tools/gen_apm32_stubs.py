@@ -79,8 +79,10 @@ out = ['/*',
        '#ifdef CHIP_APM32F407',
        '#include <stdbool.h>', '#include <stddef.h>', '#include <stdint.h>']
 out += ['#include "%s"' % h[5:] for h in sorted({p[0] for p in protos})]
-out += ['', '/* The own Maidenhead locator is kept by the FT8 decoder; hold it here so the QTH setting still works. */',
-        'static char s_own_grid[7] = "";', '']
+out.append('')
+if any(p[2] in ('ft8_decoder_get_own_grid', 'ft8_decoder_set_own_grid') for p in protos):
+    out += ['/* The own Maidenhead locator is kept by the FT8 decoder; hold it here so the QTH setting still works. */',
+            'static char s_own_grid[7] = "";', '']
 cur = None
 for h, ret, n, args in sorted(protos, key=lambda p: (p[0], p[2])):
     if h != cur:

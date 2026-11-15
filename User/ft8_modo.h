@@ -184,5 +184,8 @@ const char *ft8_modo_estado_txt(void);
  * adivinar. Sale de las constantes del adaptador, no de un numero escrito a
  * mano, para que no se quede vieja el dia que la ventana cambie. */
 float ft8_modo_ventana_hz(void);
+/* APM32: where the window starts, which is not 0 there (200 Hz, FT8_ADAPTER_MIN_RAW_BIN in reglas.mk).
+ * ft8_modo_ventana_hz() above gives the top edge, counted from 0 as before, so it stays right either way. */
+float ft8_modo_ventana_ini_hz(void);
 
 #endif /* FT8_MODO_H */
