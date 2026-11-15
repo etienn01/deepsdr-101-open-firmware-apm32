@@ -2,6 +2,9 @@
  * SSTV. Ver sstv.h para el porque de cada pieza.
  */
 #include "hfdl_ram.h"
+#ifdef CHIP_APM32F407
+#include "ft8_shared_ram.h"   /* the size of the loan, for the check after sal_t */
+#endif
 #include "sstv.h"
 #include "disc_fm.h"
 #include <string.h>
@@ -393,8 +396,14 @@ static uint32_t  s_t0;            /* muestra en la que empezo la linea */
 static uint8_t   s_hay_t0;
 
 /* --- la linea en curso --- */
+#ifdef CHIP_APM32F407
+/* APM32: inside the loan with the rest of SSTV's buffers, see sal_t. */
+#define s_sum (s_sal_p->sum)
+#define s_cnt (s_sal_p->cnt)
+#else
 static TCMRAM_BSS uint16_t s_sum[CH_MAX][SSTV_ANCHO];
 static TCMRAM_BSS uint8_t  s_cnt[CH_MAX][SSTV_ANCHO];
+#endif
 /* El porche que dice cual de las dos diferencias de color trae esta linea en
  * Robot 36. Ver croma_de_linea(). */
 static float     s_sep_sum;
@@ -478,9 +487,24 @@ typedef struct {
     uint8_t  r36_y[SSTV_ANCHO];
     uint8_t  r36_c[SSTV_ANCHO];
     uint8_t  rgb[SSTV_ANCHO * 3U];
+#ifdef CHIP_APM32F407
+    /*
+     * APM32: the line accumulators too (3,840 bytes of TCM). They are touched once per sample, which is why
+     * they were in fast RAM; at 12 kHz that is nothing for the main SRAM. Like everything else in here they
+     * only exist while SSTV holds the loan: they are cleared in sstv_start() after the loan is taken, and
+     * every other reader and writer runs from sstv_process(), sstv_fuerza() or sstv_busca(), which all
+     * return when s_on is clear; s_on is only set once s_sal_p points at the loan, and sstv_stop() clears
+     * it first. The loan is 27,648 bytes on the APM32; this struct is 16,984 (checked below).
+     */
+    uint16_t sum[CH_MAX][SSTV_ANCHO];
+    uint8_t  cnt[CH_MAX][SSTV_ANCHO];
+#endif
 } sal_t;
 
 static sal_t    *s_sal_p;
+#ifdef CHIP_APM32F407
+_Static_assert(sizeof(sal_t) <= sizeof(g_ft8_shared_ram), "sal_t no longer fits in the loan (hfdl_ram.h)");
+#endif
 static uint8_t   s_sal_cab, s_sal_col;
 static uint16_t  s_y;
 
@@ -954,6 +978,9 @@ void sstv_start(float fs_hz)
 
 void sstv_stop(void)
 {
+    /* s_on FIRST: from here on sstv_process() returns at its first line, so no interrupt can reach the
+     * buffers inside the loan while it is being handed back (s_r36_*, and on APM32 the line accumulators). */
+    s_on = 0U;
     if (s_sal_p != 0) {
         /* El puntero se borra ANTES de soltar: sstv_linea() y la cola corren
          * desde sitios distintos -el bucle principal y la interrupcion- y

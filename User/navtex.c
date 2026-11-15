@@ -3,6 +3,7 @@
  */
 #include "navtex.h"
 #include "nco.h"
+#include "decoder_arena.h"
 #include <string.h>
 
 #ifdef __GNUC__
@@ -129,8 +130,17 @@ static nco_t   s_nco_m, s_nco_e;
 static float   s_centro_hz = NAVTEX_CENTRO_HZ;
 static uint8_t s_invertido;
 
+#ifdef CHIP_APM32F407
+/* APM32: shared with APRS, which never runs at the same time. See decoder_arena.h. */
+#define s_mi (g_decoder_arena.navtex.mi)
+#define s_mq (g_decoder_arena.navtex.mq)
+#define s_ei (g_decoder_arena.navtex.ei)
+#define s_eq (g_decoder_arena.navtex.eq)
+_Static_assert(DECODER_ARENA_NAVTEX_SPB == SPB_MAX, "decoder_arena.h no longer matches SPB_MAX");
+#else
 static TCMRAM_BSS float s_mi[SPB_MAX], s_mq[SPB_MAX];
 static TCMRAM_BSS float s_ei[SPB_MAX], s_eq[SPB_MAX];
+#endif
 static uint16_t s_hidx;
 static uint16_t s_spb;             /* muestras por bit */
 static float    s_smi, s_smq, s_sei, s_seq;   /* las cuatro sumas moviles */
@@ -335,6 +345,7 @@ void navtex_start(float fs_hz)
     s_cruces = 0U; s_cruces_n = 0U; s_signo_ant = 1U; s_vueltas = 0U;
     tonos_fija();
 
+    decoder_arena_take(DECODER_ARENA_NAVTEX);   /* before clearing: see decoder_arena.h */
     memset(s_mi, 0, sizeof s_mi); memset(s_mq, 0, sizeof s_mq);
     memset(s_ei, 0, sizeof s_ei); memset(s_eq, 0, sizeof s_eq);
     s_hidx = 0U; s_llenado = 0U;
@@ -875,7 +886,7 @@ void navtex_process(const float *audio, uint32_t n)
 {
     uint32_t k;
 
-    if (!s_on || !audio) { return; }
+    if (!s_on || !audio || !decoder_arena_mine(DECODER_ARENA_NAVTEX)) { return; }
 
     for (k = 0U; k < n; k++) {
         float x = audio[k];

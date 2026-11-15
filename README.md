@@ -21,7 +21,7 @@ repositorio se tomó midiendo y no a ojo.
 `V6.77` · cargador `v2.19` · **dos binarios, uno por chip**:
 `update.bin` 490.708 B CRC `48DD88F1` (GD32F450VET6, 512 kB) ·
 `update_470.bin` 490.724 B CRC `504DACAA` (GD32F470VGT6, 1024 kB) ·
-**307 comprobaciones en verde, 0 fallos** (`make comprueba`)
+**308 comprobaciones en verde, 0 fallos** (`make comprueba`)
 
 🇬🇧 [English below](#deepsdr-101--open-firmware) · 📘
 [Manual de uso (PDF, ES + EN)](DeepSDR_Reload_Manual-ES-EN.pdf)
@@ -552,7 +552,7 @@ in this repository was made by measuring rather than by eye.
 `V6.77` · bootloader `v2.19` · **two builds, one per chip**:
 `update.bin` 490,708 B CRC `48DD88F1` (GD32F450VET6, 512 kB) ·
 `update_470.bin` 490,724 B CRC `504DACAA` (GD32F470VGT6, 1024 kB) ·
-**307 checks green, 0 failures** (`make comprueba`)
+**308 checks green, 0 failures** (`make comprueba`)
 
 📘 [User manual (PDF, ES + EN)](DeepSDR_Reload_Manual-ES-EN.pdf)
 

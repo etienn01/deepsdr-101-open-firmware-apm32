@@ -2762,6 +2762,18 @@ g3ruh: out/g3ruh ; ./out/g3ruh
 
 comprueba: g3ruh
 
+# The APM32 decoder arena: NAVTEX and APRS share their buffers there, see User/decoder_arena.h. Built with
+# CHIP_APM32F407 because that is the only configuration where they are shared.
+out/decoderarena: sim/decoder_arena_test.c $(FIRMWARE)/User/decoder_arena.c $(FIRMWARE)/User/decoder_arena.h \
+                  $(FIRMWARE)/User/navtex.c $(FIRMWARE)/User/ax25.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -DCHIP_APM32F407 -I$(FIRMWARE)/User -o $@ $(filter %.c,$^) $(LDLIBS)
+
+.PHONY: decoderarena
+decoderarena: out/decoderarena ; ./out/decoderarena
+
+comprueba: decoderarena
+
 .PHONY: wspr
 wspr: out/wsprtest ; ./out/wsprtest
 

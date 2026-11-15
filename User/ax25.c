@@ -3,6 +3,7 @@
  */
 #include "ax25.h"
 #include "nco.h"
+#include "decoder_arena.h"
 #include <string.h>
 
 #ifdef __GNUC__
@@ -58,8 +59,17 @@ static float    s_baud, s_marca_hz, s_espacio_hz;
 
 /* --- 1. los dos tonos --- */
 static nco_t    s_nco_m, s_nco_e;
+#ifdef CHIP_APM32F407
+/* APM32: shared with NAVTEX, which never runs at the same time. See decoder_arena.h. */
+#define s_mi (g_decoder_arena.ax25.mi)
+#define s_mq (g_decoder_arena.ax25.mq)
+#define s_ei (g_decoder_arena.ax25.ei)
+#define s_eq (g_decoder_arena.ax25.eq)
+_Static_assert(DECODER_ARENA_AX25_SPB == SPB_MAX, "decoder_arena.h no longer matches SPB_MAX");
+#else
 static TCMRAM_BSS float s_mi[SPB_MAX], s_mq[SPB_MAX];
 static TCMRAM_BSS float s_ei[SPB_MAX], s_eq[SPB_MAX];
+#endif
 static uint16_t s_hidx, s_spb, s_llenado;
 static float    s_smi, s_smq, s_sei, s_seq;
 static float    s_nivel;
@@ -208,6 +218,7 @@ void ax25_start_fsk(float fs_hz, float baud, float marca_hz, float espacio_hz)
     nco_freq(&s_nco_m, s_marca_hz, fs_hz);
     nco_freq(&s_nco_e, s_espacio_hz, fs_hz);
 
+    decoder_arena_take(DECODER_ARENA_AX25);   /* before clearing: see decoder_arena.h */
     memset(s_mi, 0, sizeof s_mi); memset(s_mq, 0, sizeof s_mq);
     memset(s_ei, 0, sizeof s_ei); memset(s_eq, 0, sizeof s_eq);
     s_hidx = 0U; s_llenado = 0U;
@@ -643,7 +654,7 @@ void ax25_process(const float *audio, uint32_t n)
     uint32_t k;
     uint32_t fm, fe, im, ie;
 
-    if (!s_on || !audio) { return; }
+    if (!s_on || !audio || !decoder_arena_mine(DECODER_ARENA_AX25)) { return; }
     if (s_g3ruh) { proceso_directo(audio, n); return; }
 
     fm = s_nco_m.fase; im = s_nco_m.inc;
