@@ -1614,8 +1614,16 @@ static void espejo_aprende_refresca(void)
  * entera: cambiarlo romperia los CONFIG.CSV de todo el mundo para ganar
  * una palabra.
  */
+#ifdef CHIP_APM32F407
+static int8_t s_tasa_sin_ft8 = -1;   /* the user's rate (tasa_idx()) while FT8 forces 48 kHz; -1 = not forced */
+#endif
+
 static uint8_t tasa_guardada(void)
 {
+#ifdef CHIP_APM32F407
+    /* While FT8 forces 48 kHz, CONFIG.CSV keeps the rate the user chose. tasa_idx() order: 48, 96, 192. */
+    if (s_tasa_sin_ft8 >= 0) { return (s_tasa_sin_ft8 == 0) ? 1U : ((s_tasa_sin_ft8 == 2) ? 2U : 0U); }
+#endif
     if (s_nonwfm_use_48k) { return 1U; }
     return s_rf_doble ? 2U : 0U;
 }
@@ -12098,8 +12106,15 @@ static void apply_demod_mode(demod_mode_t mode)
  * reparten los bytes de la cascada se paran seguidos, sin colar nada en
  * medio, porque sus stop() se pasan el prestamo unos a otros.
  */
+#ifdef CHIP_APM32F407
+static uint8_t ft8_tasa(uint8_t ft8);   /* FT8 runs at 48 kHz on the APM32: see its comment, after tasa_pon() */
+#endif
+
 static void digi_todo_apagado(void)
 {
+#ifdef CHIP_APM32F407
+    (void)ft8_tasa(0U);   /* the user's rate back; every caller applies the mode afterwards, or does it itself */
+#endif
     rtty_set_enabled(0U);
     cw_set_enabled(0U);
     navtex_stop();
@@ -12683,6 +12698,9 @@ static uint8_t tasa_idx(void)
 static void tasa_pon(uint8_t idx)
 {
     if (idx == tasa_idx()) { return; }
+#ifdef CHIP_APM32F407
+    s_tasa_sin_ft8 = -1;   /* chosen by hand, in FT8 or not: it stays when FT8 is left */
+#endif
 
     switch (idx) {
     case 0U:  s_nonwfm_use_48k = 1U; s_rf_doble = 0U; break;
@@ -12746,6 +12764,48 @@ static void tasa_pon(uint8_t idx)
         tasa_rf_reaplica();
     }
 }
+
+#ifdef CHIP_APM32F407
+/*
+ * FT8 AT 48 kHz - 15/11/2026, APM32 build.
+ *
+ * Profiled on the radio while FT8 decodes (40 m, PC sampling over SWD), the share of the CPU the decoder gets:
+ * 43 % at 192 kHz, 58 % at 96, 75 % at 48. The rest is the audio interrupt, which handles every raw sample (the
+ * 192 -> 96 kHz half-band filter alone is 15 %). The decode has 1.6 s of wall clock (FT8_TOPE_MS) before it has
+ * to drop the weakest candidates, so at 48 kHz a slot can hold about 1.7 times the work. FT8 itself loses
+ * nothing: every rate hands it the same 12 kHz audio, of which it reads 200-2,800 Hz.
+ *
+ * So choosing FT8 in the mode menu switches to 48 kHz and leaving it switches back. The user's rate is kept in
+ * s_tasa_sin_ft8 and is what CONFIG.CSV gets (tasa_guardada()); choosing a rate by hand ends the override
+ * (tasa_pon()). Called before apply_demod_mode(), which does the switch: one codec restart, before
+ * ft8_modo_start(), so FT8's lost-audio counter starts at zero. Returns 1 if it changed the rate flags.
+ */
+static uint8_t ft8_tasa(uint8_t ft8)
+{
+    if (ft8 && s_tasa_sin_ft8 < 0) {
+        s_tasa_sin_ft8 = (int8_t)tasa_idx();
+        if (s_tasa_sin_ft8 == 0) { return 0U; }   /* already at 48: nothing to switch, still restored on exit */
+        s_nonwfm_use_48k = 1U;
+        s_rf_doble = 0U;
+        return 1U;
+    }
+    if (!ft8 && s_tasa_sin_ft8 >= 0) {
+        uint8_t idx = (uint8_t)s_tasa_sin_ft8;
+
+        s_tasa_sin_ft8 = -1;
+        if (idx == tasa_idx()) { return 0U; }
+        s_nonwfm_use_48k = (uint8_t)(idx == 0U);
+        s_rf_doble = (uint8_t)(idx == 2U);
+        /* Same rule as tasa_pon(): no zoom at 192 kHz. */
+        if (!zoom_cabe() && s_spec_zoom != SPEC_ZOOM_1X) {
+            s_spec_zoom = SPEC_ZOOM_1X;
+            zoom_decimators_init();
+        }
+        return 1U;
+    }
+    return 0U;
+}
+#endif
 
 static void menu_tile_rate_callback(void *widget, ui_event_t event, void *user_data)
 {
@@ -24727,6 +24787,9 @@ static void menu_mode_preset_callback(void *widget, ui_event_t event, void *user
             return;
         }
 
+#ifdef CHIP_APM32F407
+        (void)ft8_tasa(k_demod_modes[idx].ft8);   /* 48 kHz in FT8: see ft8_tasa() */
+#endif
         apply_demod_mode(mode);
         /* Re-tune at the (unchanged) selected frequency so the LO
          * offset behavior matches the NEW mode immediately - same
@@ -36642,6 +36705,15 @@ static void tune_encoder_poll(void)
          */
         if (!habia_que_deshacer && modo_panel_entero()) {
             digi_todo_apagado();
+#ifdef CHIP_APM32F407
+            /* Out of FT8 this way nothing applies the mode afterwards, and digi_todo_apagado() has just put the
+             * user's rate back in the flags (ft8_tasa()): switch the codec to it. */
+            if (s_current_rate != (s_rf_doble ? AIC3204_RATE_192K
+                                   : (s_nonwfm_use_48k ? AIC3204_RATE_48K : AIC3204_RATE_96K))) {
+                apply_demod_mode(demod_am_get_mode());
+                apply_lo_tune(s_tune_hz);
+            }
+#endif
             s_ft8_todo = 1U;        /* que el panel no se de por pintado */
             radio_screen_draw();    /* el espectro vuelve a su sitio */
             debug_print("encoder: pulsacion larga - fuera del modo digital\n");
